@@ -5,6 +5,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
 #include "FGCharacterPlayer.h"
+#include "FGDestructibleActor.h"
 #include "FGDismantleInterface.h"
 #include "FGInventoryComponent.h"
 #include "FGPlayerController.h"
@@ -39,6 +40,7 @@ UStaticMeshComponent* FMKITerrainRules::RockMesh(const AActor* Actor)
 {
 	const AStaticMeshActor* MeshActor = Cast<AStaticMeshActor>(Actor);
 	UStaticMeshComponent* Mesh = MeshActor ? MeshActor->GetStaticMeshComponent() : nullptr;
+	if (const AFGDestructibleActor* Destructible = Cast<AFGDestructibleActor>(Actor)) Mesh = const_cast<AFGDestructibleActor*>(Destructible)->GetStaticMeshComponent();
 	return Mesh && Mesh->GetStaticMesh() ? Mesh : nullptr;
 }
 
@@ -58,6 +60,21 @@ FString FMKITerrainRules::RefusalReason(const AActor* Actor)
 	for (const TCHAR* Folder : ReservedMeshFolders) if (MeshPath.Contains(Folder)) return TEXT("reserved_mesh");
 	if (Actor->IsHidden() || !Actor->GetActorEnableCollision()) return TEXT("hidden");
 	return FString();
+}
+
+FString FMKITerrainRules::DestructibleRefusalReason(const AActor* Actor)
+{
+	if (!IsValid(Actor) || Actor->IsActorBeingDestroyed()) return TEXT("missing");
+	const AFGDestructibleActor* Destructible = Cast<AFGDestructibleActor>(Actor);
+	if (!Destructible) return TEXT("not_destructible");
+	// One already fracturing or broken (by a nobelisk or Terrain mode) has nothing left to break.
+	if (Destructible->GetDestructibleActorState() != EDestructibleActorState::DSS_Intact) return TEXT("not_intact");
+	return FString();
+}
+
+bool FMKITerrainRules::IsTerrainTarget(const AActor* Actor)
+{
+	return RefusalReason(Actor).IsEmpty() || DestructibleRefusalReason(Actor).IsEmpty();
 }
 
 bool FMKITerrainRules::IsRockFoliageMesh(const UStaticMesh* Mesh)

@@ -6,9 +6,9 @@ Satisfactory mods by **MidKnight Industries**. Each release of a mod is one comm
 
 | Mod | Version | What it is | Source |
 | --- | --- | --- | --- |
-| **MKI Roads** (`MKIRoads`) | 0.8.1 | Asphalt roads laid like railway track: curves, grades, intersections, a turnaround, truck depots, road supports, lane markings and vehicle paths. Usable on its own. | [mods/MKIRoads](mods/MKIRoads/README.md) |
+| **MKI Roads** (`MKIRoads`) | 0.8.2 | Asphalt roads laid like railway track: curves, grades, intersections, lane transitions, a turnaround, truck depots with lane switches, road supports, single and double street lights, lane markings and vehicle paths. Usable on its own. | [mods/MKIRoads](mods/MKIRoads/README.md) |
 | **MKI Bridge** (`MKIBridge`) | 0.4.6 | A local, token-protected HTTP bridge that lets an AI assistant observe and build in your world. It requires MKI Roads. | [mods/MKIBridge](mods/MKIBridge/README.md) |
-| **MKI Tools** (`MKITools`) | 0.3.0 | Quality-of-life tools: a Terrain dismantle mode for level rocks and arches, hold-E auto pickup, and options under Mods > MKI Tools (chainsaw boulders and clearance radius, hand crafting and mining multipliers, health regeneration, a movement speed bonus, extra inventory slots, collecting nearby items, short conveyor lifts, vegetation regrowth). Usable on its own. | [mods/MKITools](mods/MKITools/README.md) |
+| **MKI Tools** (`MKITools`) | 0.4.0 | Quality-of-life tools: Terrain and Area dismantle modes, foundation area zoop, dismantling unused belt and pipe supports, elevation and length readouts, hold-E auto pickup, and settings under Options > MKI Tools (chainsaw boulders and clearance radius, hand crafting and mining multipliers, health regeneration, a movement speed bonus and flight mode, extra inventory slots, collecting nearby items, filling the Dimensional Depot from the inventory, short conveyor lifts, an object scanner range bonus, vegetation regrowth). Usable on its own. | [mods/MKITools](mods/MKITools/README.md) |
 
 Players install the mods through [Satisfactory Mod Manager](https://ficsit.app). This repository is for people who want to read or build the code.
 
@@ -32,7 +32,7 @@ The bridge also needs two small editor-created assets this repository does not h
 
 ## Tests and versions
 
-`npm test` runs the tooling tests, which also check the plugin sources, descriptors and content manifest; CI runs them on Linux and Windows with `npm run versions -- check`. `npm run versions -- set roadPack 0.8.1` changes a mod's version in every place that states it. The native modules can only be compiled on Windows with the SML toolchain, so CI does not compile them.
+`npm test` runs the tooling tests, which also check the plugin sources, descriptors and content manifest; CI runs them on Linux and Windows with `npm run versions -- check`. `npm run versions -- set roadPack 0.8.2` changes a mod's version in every place that states it. The native modules can only be compiled on Windows with the SML toolchain, so CI does not compile them.
 
 ## Layout
 

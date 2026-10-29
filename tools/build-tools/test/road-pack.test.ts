@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import test from "node:test";
-import { parseRoadKitDocument, roadJunctionEntries, roadKit, roadSupportEntries, roadPackAssetPackages, roadPackEditorPlan, splineRoadPatterns, splineRoadVariants } from "../src/road-kit.js";
+import { parseRoadKitDocument, roadJunctionEntries, roadKit, roadStreetLightEntries, roadSupportEntries, roadPackAssetPackages, roadPackEditorPlan, splineRoadPatterns, splineRoadVariants, streetLightMeshProblems } from "../src/road-kit.js";
 import { encodePng, loadRoadKitIcons, PATTERN_ICON_LINE, renderRoadKitIcons, summarizeIcon } from "../src/road-pack-icons.js";
 import {
   assertRoadNetworkAvailable, BINARY_FRESHNESS_SLACK_MS, containerEntries, cookedRegistryProblems, shippingBuildOutputs, dependencyContractProblems, descriptorModules, packagedArtifactProblems, pluginDependency, readPluginDescriptor, roadNetworkAvailability, satisfiesRange, REGISTRATION_CHAIN_CLASSES, ROAD_NETWORK_FEATURE, ROAD_PACK_PLUGIN,
@@ -387,9 +387,11 @@ test("the import step creates exactly the manifest's MKI Roads packages", () => 
     ...["Build", "Desc", "Recipe"].map((kind) => `/MKIRoads/SplineRoad/${kind}_MKIR_SplineRoad1m`),
     // #227: the 3-way and 4-way intersections, each with its own icon.
     // #236: the turnaround, an entry of the same kind.
-    ...["Intersection2Way", "Intersection3Way", "Intersection4Way", "Turnaround", "TruckDepotLarge", "TruckDepotLargeBoth"].flatMap((stem) => [...["Build", "Desc", "Recipe"].map((kind) => `/MKIRoads/SplineRoad/${kind}_MKIR_${stem}`), `/MKIRoads/Icons/Icon_MKIR_${stem}`]),
+    ...["Intersection2Way", "Intersection3Way", "Intersection4Way", "Turnaround", "TruckDepotLarge", "TruckDepotLargeBoth", "LaneTransition4To2"].flatMap((stem) => [...["Build", "Desc", "Recipe"].map((kind) => `/MKIRoads/SplineRoad/${kind}_MKIR_${stem}`), `/MKIRoads/Icons/Icon_MKIR_${stem}`]),
     // #194: the concrete road supports.
     ...["Build", "Desc", "Recipe"].map((asset) => `/MKIRoads/Supports/${asset}_MKIR_SupportsConcrete`),
+    // #400: the Double Street Light, with its own mesh and decoration template.
+    ...["Build", "Deco", "Desc", "Recipe", "SM"].map((asset) => `/MKIRoads/StreetLights/${asset}_MKIR_StreetLightDouble`),
   ].sort());
   assert.ok(packages.every((path) => !/\/(?:Attachment|Adjustable|Prototype|Holograms|Meshes|Buildables|Recipes)\//.test(path)), "no retired modular asset is built");
   assert.deepEqual(packages, [...new Set(packages)].sort());
@@ -408,11 +410,11 @@ test("the spline road entries and patterns are listed, unlocked, and costed from
   }
   // The maintainer: the roads in Roads, everything attached to them in Attachments.
   assert.deepEqual(kit.package.buildMenu.subCategories.map((item) => item.displayName), ["Roads", "Attachments"]);
-  for (const key of ["supports"] as const) assert.equal(kit.package[key].subCategory, "/MKIRoads/BuildMenu/SC_MKIPacks_Attachments.SC_MKIPacks_Attachments_C", key);
+  for (const key of ["supports", "streetLights"] as const) assert.equal(kit.package[key].subCategory, "/MKIRoads/BuildMenu/SC_MKIPacks_Attachments.SC_MKIPacks_Attachments_C", key);
   // The editor plan carries exactly the entries, the patterns, and the paints; nothing of the modular pieces.
   const plan = roadPackEditorPlan(kit);
-  assert.deepEqual(Object.keys(plan).sort(), ["assetPackages", "paints", "schema", "schemaVersion", "splineRoad", "supports"]);
-  assert.equal(plan.schemaVersion, 16);
+  assert.deepEqual(Object.keys(plan).sort(), ["assetPackages", "paints", "schema", "schemaVersion", "splineRoad", "streetLights", "supports"]);
+  assert.equal(plan.schemaVersion, 17);
   assert.deepEqual(plan.splineRoad.entries, variants);
   assert.deepEqual(plan.splineRoad.patterns, patterns);
   assert.deepEqual(plan.paints, kit.package.markings.paints);
@@ -662,24 +664,26 @@ test("the vanilla street light snaps to a road's edges and centerline; there is 
   const kit = roadKit(), plan = roadPackEditorPlan(kit);
   // The maintainer: no separate road light; the vanilla street light works on roads in its stead.
   assert.ok(!("lights" in kit.package) && !("lights" in plan), "no Road Street Light entry");
-  assert.ok(kit.placeholders.every((item) => !/StreetLight/.test(item.path)), "no street light placeholder");
+  // The only street light placeholders are the vanilla assets the Double Street Light (#400) is made from.
+  const used = new Set([kit.package.streetLights.spotLightComponent, kit.package.streetLights.lightShaftComponent, ...kit.package.streetLights.entries.flatMap((entry) => [entry.vanillaBuildable, entry.vanillaDescriptor, entry.vanillaRecipe, entry.vanillaMesh, ...entry.materials.map((item) => item.material)])]);
+  assert.deepEqual(kit.placeholders.filter((item) => /StreetLight/.test(item.path) && !used.has(item.path)).map((item) => item.path), [], "no street light placeholder beyond the double's");
   const source = resolve(roadPackPluginDirectory, "Source", "MKIRoads");
   const snap = readFileSync(resolve(source, "Private", "MKIRoadBuildSnap.cpp"), "utf8"), header = readFileSync(resolve(source, "Public", "MKIRoadBuildSnap.h"), "utf8");
   const module = readFileSync(resolve(source, "Private", "MKIRoadsModule.cpp"), "utf8"), road = readFileSync(resolve(source, "Private", "MKIRoadSplineRoad.cpp"), "utf8");
   // After the vanilla factory hologram placed itself (Holo_StreetLight's native parent is AFGFactoryHologram), a street
   // light aimed at a road is snapped; any other hologram or aim keeps the vanilla placement.
   assert.ok(module.includes("SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGFactoryHologram, SetHologramLocationAndRotation, [](AFGFactoryHologram* Self, const FHitResult& HitResult)\n\t\t{\n\t\t\tFMKIRoadBuildSnap::SnapStreetLightHologram(Self, HitResult);\n\t\t});"));
-  assert.match(snap, /if \(!Road \|\| !IsStreetLight\(Hologram->GetBuildClass\(\)\)\) return false;/);
+  assert.match(snap, /if \(!Road \|\| !\(bDouble \|\| IsStreetLight\(BuildClass\)\)\) return false;/);
   assert.match(snap, /TEXT\("\/Game\/FactoryGame\/Buildable\/Factory\/StreetLight\/Build_StreetLight\.Build_StreetLight_C"\)/);
   // The placement of the removed Road Street Light (#199, #200, #203): the third of the deck aimed at picks the side, the
   // pole 50 cm inside the edge, 4 m steps along the road, the arm (+Y) over the road, then the hologram's rotation.
   assert.match(header, /static constexpr float LightEdgeInsetCm = 50\.f;/);
   assert.match(header, /static constexpr float LightStepCm = 400\.f;/);
-  assert.match(snap, /const EMKIRoadSide Side = RoadSideAt\(Road, Hit\);/);
+  assert.match(snap, /const EMKIRoadSide Side = bCenterline \? EMKIRoadSide::Center : RoadSideAt\(Road, Hit\);/);
   assert.match(snap, /const float Distance = FMath::Clamp\(FMath::RoundToFloat\(Spline->GetDistanceAlongSplineAtSplineInputKey\(Key\) \/ LightStepCm\) \* LightStepCm, 0\.f, Length\);/);
   assert.match(snap, /FRotationMatrix::MakeFromYZ\(Right \* Toward, FVector::UpVector\)/);
   assert.match(snap, /Out = FTransform\(FQuat\(FVector::UpVector, FMath::DegreesToRadians\(ExtraYawDeg\)\) \* Facing, Center \+ Right \* Offset\);/);
-  assert.match(snap, /SnapStreetLight\(\*Road, HitResult\.Location, static_cast<float>\(Hologram->GetScrollRotateValue\(\)\), Snapped\)/);
+  assert.match(snap, /SnapStreetLight\(\*Road, HitResult\.Location, static_cast<float>\(Hologram->GetScrollRotateValue\(\)\), Snapped, bDouble\)/);
   // The Road Street Light fix-up is gone with the maintainer's cleanup: no recipe restore, no subsystem for it, and no
   // SML hook on PostLoadGame (an IFGSaveInterface function; a hook on AFGBuildable's crashed the load, live).
   assert.doesNotMatch(module, /PostLoadGame/);
@@ -695,6 +699,89 @@ test("the vanilla street light snaps to a road's edges and centerline; there is 
   // #202: MKI Patterns must name the base-game category it derives from (the vanilla Patterns category).
   assert.throws(() => parseRoadKitDocument(changed((copy) => { delete copy.package.splineRoad.patterns.category.parent; })), /package\.splineRoad\.patterns\.category\.parent/);
   assert.throws(() => parseRoadKitDocument(changed((copy) => { copy.package.splineRoad.patterns.category.parent = "/MKIRoads/Customization/CC_Other.CC_Other"; })), /package\.splineRoad\.patterns\.category\.parent/);
+});
+
+test("the Double Street Light is the vanilla street light with one hook-up on the pole and an arm each side (#400)", () => {
+  const kit = roadKit(), lights = roadStreetLightEntries(kit), plan = roadPackEditorPlan(kit);
+  const blenderScript = readFileSync(resolve(roadPackDirectory, "blender", "street_light_double.py"), "utf8");
+  assert.deepEqual(lights.map((item) => [item.displayName, item.menuPriority]), [["Double Street Light", 89.7]]);
+  const [light] = lights;
+  assert.equal(light!.classPath, "/MKIRoads/StreetLights/Build_MKIR_StreetLightDouble.Build_MKIR_StreetLightDouble_C");
+  assert.equal(light!.parentClass, "/Game/FactoryGame/Buildable/Factory/StreetLight/Build_StreetLight.Build_StreetLight_C");
+  assert.equal(light!.decoratorPath, "/MKIRoads/StreetLights/Deco_MKIR_StreetLightDouble.Deco_MKIR_StreetLightDouble_C");
+  assert.equal(light!.meshFile, "SM_MKIR_StreetLightDouble.fbx");
+  assert.deepEqual(plan.streetLights.entries, lights);
+  for (const path of [light!.classPath, light!.descriptorPath, light!.recipePath, light!.decoratorPath, light!.meshPath]) assert.ok(roadPackAssetPackages(kit).includes(path.split(".")[0]!), path);
+  // The maintainer: one electrical hook-up in the center in line with the pole, and two arms with lights on either side
+  // (arms 2.8 m shorter than vanilla, lamps over the lanes); two lamps cost and draw twice the vanilla street light.
+  assert.deepEqual(light!.powerConnectionCm.slice(0, 2), [0, 0]);
+  assert.deepEqual(light!.lamps.map((lamp) => [lamp.spotLightCm[0], lamp.spotLightCm[1], lamp.yawDeg]), [[0, 462.6, 0], [0, -462.6, 180]]);
+  assert.equal(light!.armTrimCm, 280);
+  assert.deepEqual([light!.costMultiplier, light!.powerMultiplier], [2, 2]);
+  // The maintainer: four power lines on the connection, so lights daisy chain along a road (vanilla takes two).
+  assert.equal(light!.powerConnectionLinks, 4);
+  const raw = JSON.parse(readFileSync(resolve(roadPackDirectory, "modules.json"), "utf8"));
+  for (const links of [0, 2.5, 9]) { const copy = structuredClone(raw); copy.package.streetLights.entries[0].powerConnectionLinks = links; assert.throws(() => parseRoadKitDocument(copy), /powerConnectionLinks/, String(links)); }
+  assert.deepEqual(light!.materials.map((item) => item.slot), ["Paint", "Color", "Normal"]);
+
+  // The meshes step accepts only a mesh whose reported positions are the manifest's (negative controls: each mismatch).
+  const meta = { armTrimCm: 280, powerConnectionCm: [...light!.powerConnectionCm], lamps: light!.lamps.map((lamp) => ({ ...lamp, spotLightCm: [...lamp.spotLightCm], lightShaftCm: [...lamp.lightShaftCm] })), triangles: 3637, collisionHulls: 7, slotTriangles: { Paint: 3000, Color: 400, Normal: 237 } };
+  assert.deepEqual(streetLightMeshProblems(light!, meta), []);
+  assert.deepEqual(streetLightMeshProblems(light!, { ...meta, powerConnectionCm: [0, 0, 993.45] }), [], "within 0.1 cm");
+  assert.match(streetLightMeshProblems(light!, { ...meta, armTrimCm: 0 }).join(), /armTrimCm 0/);
+  assert.match(streetLightMeshProblems(light!, { ...meta, powerConnectionCm: [0, -173.32, 949.41] }).join(), /power connection/);
+  assert.match(streetLightMeshProblems(light!, { ...meta, lamps: meta.lamps.slice(0, 1) }).join(), /1 lamps/);
+  assert.match(streetLightMeshProblems(light!, { ...meta, lamps: [meta.lamps[0]!, { ...meta.lamps[1]!, yawDeg: 0 }] }).join(), /lamp 1/);
+  assert.match(streetLightMeshProblems(light!, { ...meta, collisionHulls: 0 }).join(), /no collision/);
+  // Live (#400): every face landed in slot 0, Unreal dropped the empty Color and Normal slots, and the import failed late.
+  assert.match(streetLightMeshProblems(light!, { ...meta, slotTriangles: { Paint: 3637, Color: 0, Normal: 0 } }).join(), /slot Color has no triangles.*slot Normal has no triangles/);
+  assert.match(streetLightMeshProblems(light!, { ...meta, slotTriangles: { Color: 400, Paint: 3000, Normal: 237 } }).join(), /material slots/);
+  assert.ok(blenderScript.includes('mesh.polygons.foreach_set("material_index", indices)'), "the slot remap is applied after the slots are re-added");
+
+  // The manifest rejects a street light that would collide with itself or the menu.
+  const document = JSON.parse(readFileSync(resolve(roadPackDirectory, "modules.json"), "utf8"));
+  const broken = (edit: (settings: { entries: Record<string, unknown>[]; subCategory: string }) => void) => {
+    const copy = structuredClone(document); edit(copy.package.streetLights); return () => parseRoadKitDocument(copy);
+  };
+  assert.throws(broken((settings) => { settings.entries.push(structuredClone(settings.entries[0]!)); }), /duplicate stem/);
+  assert.throws(broken((settings) => { (settings.entries[0]!.materials as { slot: string }[])[1]!.slot = "Paint"; }), /duplicate slot/);
+  assert.throws(broken((settings) => { settings.subCategory = "/MKIRoads/BuildMenu/SC_Nowhere.SC_Nowhere_C"; }), /streetLights\.subCategory/);
+  assert.throws(broken((settings) => { settings.entries[0]!.vanillaMesh = "/Game/FactoryGame/Buildable/Factory/StreetLight/Mesh/Other.Other"; }), /no registered placeholder/);
+
+  // The editor import builds it from the mesh step's FBX, keeps the vanilla hologram and light behaviour, and verifies it.
+  const editor = readFileSync(resolve(roadPackDirectory, "unreal", "road_pack_editor.py"), "utf8");
+  assert.ok(editor.includes('task.set_editor_property("filename", os.path.join(CONFIG["meshDir"], entry["meshFile"]))'));
+  assert.ok(editor.includes('blueprint = create_blueprint(entry["decoratorPath"], unreal.FGDecorationTemplate)'), "a new decoration template, not a child of Deco_StreetLight");
+  assert.ok(editor.includes('buildable = create_blueprint(entry["classPath"], vanilla_class)'));
+  assert.ok(editor.includes('connections[0][1].set_editor_property("relative_location", vector(entry["powerConnectionCm"]))'));
+  assert.ok(editor.includes('connections[0][1].set_editor_property("mMaxNumConnectionLinks", int(entry["powerConnectionLinks"]))'));
+  assert.ok(editor.includes("    verify_street_lights()\n"));
+  // Live (#400): a pooled light component's class is loaded from a Blueprint (an unreal.Class), which isinstance cannot
+  // take; components are matched by UClass.
+  assert.ok(editor.includes("unreal.MathLibrary.class_is_child_of(template.get_class(), wanted)"));
+  assert.doesNotMatch(editor, /isinstance\([^)]*, component_class\)\]/);
+  // Live (#400): no editor subsystem exists in the headless commandlet, so verify reads the hulls from the body setup.
+  assert.ok(editor.includes('get_editor_property("agg_geom").get_editor_property("convex_elems")'));
+  assert.doesNotMatch(editor, /get_editor_subsystem\(/);
+  // Live (#400): the FBX is in metres; without converting scene units the light imported at 1/100 size, invisible and
+  // unbuildable. The import and verify both compare the mesh's bounds with those the meshes step reported.
+  assert.ok(editor.includes('data.set_editor_property("convert_scene_unit", True)'));
+  assert.equal(editor.match(/= street_light_bounds_problems\(entry, mesh\)/g)?.length, 2);
+  const cli = readFileSync(resolve(repositoryRoot, "tools", "build-tools", "scripts", "road-pack.ts"), "utf8");
+  assert.ok(cli.includes('else if (command === "import") { meshes(); buildEditor(); runEditor("import"); runEditor("verify"); }'));
+  assert.ok(cli.includes("meshDir: MESHES"));
+  // The mesh script reads the vanilla mesh from .local and is the one the CLI runs; no game file is committed.
+  assert.match(blenderScript, /"powerConnectionCm"/);
+  assert.ok(!readdirSync(resolve(roadPackDirectory, "blender")).some((name) => /\.(glb|fbx|uasset|blend)$/i.test(name)));
+
+  // Aimed at a road, it stands on the centerline whatever third of the deck is aimed at; the vanilla street light keeps
+  // its side pick (negative control).
+  const source = resolve(roadPackPluginDirectory, "Source", "MKIRoads");
+  const snap = readFileSync(resolve(source, "Private", "MKIRoadBuildSnap.cpp"), "utf8");
+  assert.match(snap, /TEXT\("\/MKIRoads\/StreetLights\/Build_MKIR_StreetLightDouble\.Build_MKIR_StreetLightDouble_C"\)/);
+  assert.match(snap, /return BuildClass && BuildClass->GetPathName\(\) == DoubleStreetLightClassPath;/);
+  assert.match(snap, /const bool bDouble = IsDoubleStreetLight\(BuildClass\);/);
+  assert.match(snap, /bCenterline \? EMKIRoadSide::Center : RoadSideAt\(Road, Hit\)/);
 });
 
 test("road supports lay concrete pillar columns under a raised road, down to the ground (#194)", () => {
@@ -774,7 +861,7 @@ test("the editor verify walks the registration chain from the root module SML di
   const walk = /def verify_registration_chain\(\):([\s\S]*?)\n\n\ndef /.exec(script)?.[1] ?? "";
   for (const link of ["mSchematics", "mUnlocks", "FGUnlockRecipe", "mRecipes", "mProduct", "mBuildableClass", "mHologramClass", "mDecoratorClass", "resolve_menu(descriptor)", "mProducedIn"]) assert.ok(walk.includes(link), `the chain walk follows ${link}`);
   assert.doesNotMatch(walk.split("splines = {")[0], /load_class\((?:PACKAGE|MENU|PLAN|entry)\[/, "links are followed through object references, not looked up from the manifest or plan");
-  assert.ok(walk.includes('"decorator": None'), "a spline road has no decoration template");
+  assert.ok(walk.includes('"decorator": entry.get("decoratorPath")'), "a road piece has no decoration template; a street light (#400) has its own");
   const verify = /def run_verify\(\):([\s\S]*?)\n\n\ntry:/.exec(script)?.[1] ?? "";
   for (const step of ["verify_spline_roads()", "verify_spline_patterns()", "verify_categories()", "verify_vanilla_asphalt()", "verify_paints()", "verify_registration()", "verify_registration_chain()", "verify_native_registration()"]) assert.ok(verify.includes(step), `run_verify runs ${step}`);
 });
@@ -783,7 +870,7 @@ test("the editor builds and verifies only the spline road kit, from the TypeScri
   const script = readFileSync(resolve(roadPackPluginDirectory, "..", "unreal", "road_pack_editor.py"), "utf8");
   assert.match(script, /PLAN = json\.load\(open\(CONFIG\["plan"\]/, "derived values come from roadPackEditorPlan");
   // #180: nothing of the modular pieces is imported, built, or verified any more.
-  for (const retired of ["fbxDir", "import_mesh", "import_markings_mesh", "build_attachment_types", "build_decorator", "build_holograms", "configure_adjustable_holograms", "build_variant", "verify_mesh", "verify_attachment", "verify_variant", "verify_hologram", "verify_markings", "verify_vanilla_materials", 'PLAN["modules"]', 'MANIFEST["modules"]', "unlocksModules", "MKIRoadsZoopHologram", "MKIRoadsSeamPointType", "MKIRoadsAdjustableHologram"]) {
+  for (const retired of ["fbxDir", "def import_mesh(", "import_markings_mesh", "build_attachment_types", "build_decorator", "build_holograms", "configure_adjustable_holograms", "build_variant", "verify_mesh", "verify_attachment", "verify_variant", "verify_hologram", "verify_markings", "verify_vanilla_materials", 'PLAN["modules"]', 'MANIFEST["modules"]', "unlocksModules", "MKIRoadsZoopHologram", "MKIRoadsSeamPointType", "MKIRoadsAdjustableHologram"]) {
     assert.ok(!script.includes(retired), `the editor no longer uses ${retired}`);
   }
   // #159: asphalt only; the verify confirms the root module carries no material registration properties.
@@ -792,8 +879,8 @@ test("the editor builds and verifies only the spline road kit, from the TypeScri
   const vanilla = /def verify_vanilla_asphalt\(\):([\s\S]*?)\n\n\ndef /.exec(script)?.[1] ?? "";
   for (const evidence of ["mSwatchGroup", "mDefaultSwatchCustomizationOverride", "manifest_basis_ingredients()"]) assert.ok(vanilla.includes(evidence), `vanilla evidence checks ${evidence}`);
   // The schematic unlocks every spline road and road pattern recipe, and the import builds the paints the patterns use.
-  assert.ok(script.includes("build_registration(build_spline_roads(shared) + build_junctions(shared) + build_spline_patterns(shared) + build_supports(shared))"), "every spline road, intersection, road pattern, and support recipe is unlocked");
-  assert.ok(!/build_lights|verify_lights|light_entries/.test(script), "no Road Street Light is built or verified (#222)");
+  assert.ok(script.includes("build_registration(build_spline_roads(shared) + build_junctions(shared) + build_spline_patterns(shared) + build_supports(shared) + build_street_lights(shared))"), "every spline road, intersection, road pattern, support, and street light recipe is unlocked");
+  assert.ok(!/\b(?:build_lights|verify_lights|light_entries)\b/.test(script), "no Road Street Light is built or verified (#222)");
   assert.ok(script.includes('unlock.set_editor_property("mRecipes", list(recipes))'));
   assert.match(script, /for settings in PLAN\["paints"\]\.values\(\):\n {8}build_paint_material\(settings\)/);
   const roads = /def build_spline_roads\(shared\):([\s\S]*?)\n\n\ndef /.exec(script)?.[1] ?? "";
@@ -809,7 +896,7 @@ test("the editor builds and verifies only the spline road kit, from the TypeScri
 test("every spline road entry and road pattern has its own deterministic icon, equal to the golden (#86, #180)", () => {
   const kit = roadKit(), golden = loadRoadKitIcons(), rendered = renderRoadKitIcons(kit);
   // Only the spline road entries' and the road patterns' icons remain; the 54 module icons went with the modules.
-  assert.deepEqual(rendered.map((icon) => icon.key), ["spline_road_1m", "road_pattern_200", "road_junction_2way", "road_junction_3way", "road_junction_4way", "road_turnaround", "road_truck_depot_7", "road_truck_depot_9"]);
+  assert.deepEqual(rendered.map((icon) => icon.key), ["spline_road_1m", "road_pattern_200", "road_junction_2way", "road_junction_3way", "road_junction_4way", "road_turnaround", "road_truck_depot_7", "road_truck_depot_9", "road_lane_transition"]);
   assert.deepEqual(rendered.map((icon) => icon.iconPath), [...splineRoadVariants(kit).map((item) => item.iconPath), ...splineRoadPatterns(kit).entries.map((item) => item.iconPath), ...roadJunctionEntries(kit).map((item) => item.iconPath)]);
   assert.deepEqual(Object.keys(golden.icons).sort(), rendered.map((icon) => icon.iconPath).sort());
   for (const icon of rendered) assert.deepEqual(summarizeIcon(icon), golden.icons[icon.iconPath], icon.iconPath);
@@ -865,8 +952,9 @@ test("no base-game or packaged asset files are committed and the plugin content 
   for (const plugin of [bridgePluginDirectory, roadPackPluginDirectory]) {
     assert.ok(!existsSync(resolve(plugin, "Content", "FactoryGame")), `${plugin} content must not contain base-game placeholder copies`);
   }
-  // #180: the Blender pipeline and its geometry golden are gone with the modular pieces.
-  assert.ok(!existsSync(resolve(roadPackDirectory, "blender")));
+  // #180: the Blender pipeline and its geometry golden are gone with the modular pieces; the only Blender script left builds
+  // the Double Street Light mesh from the vanilla one (#400), which it reads from .local.
+  assert.deepEqual(readdirSync(resolve(roadPackDirectory, "blender")), ["street_light_double.py"]);
   assert.ok(!existsSync(resolve(roadPackDirectory, "generated", "road-kit.geometry.json")));
 });
 
@@ -894,7 +982,7 @@ test("road intersections: 2-, 3-, and 4-way pieces with 8 m aprons and square co
   const kit = roadKit(), entries = roadJunctionEntries(kit);
   // The maintainer: one entry per arm count, Plus and Minus for 1, 2, or 4 lanes, after the roads in MKI Packs > Roads.
   // #228 (the maintainer): a 2-way as well, a corner for tight turns.
-  assert.deepEqual(entries.map((item) => [item.displayName, item.arms, item.menuPriority]), [["Intersection (2-way)", 2, 88.1], ["Intersection (3-way)", 3, 88.11], ["Intersection (4-way)", 4, 88.12], ["Turnaround", 1, 88.13], ["Truck Depot", 7, 88.14], ["Truck Depot (Both Sides)", 9, 88.15]]);
+  assert.deepEqual(entries.map((item) => [item.displayName, item.arms, item.menuPriority]), [["Intersection (2-way)", 2, 88.1], ["Intersection (3-way)", 3, 88.11], ["Intersection (4-way)", 4, 88.12], ["Turnaround", 1, 88.13], ["Truck Depot", 7, 88.14], ["Truck Depot (Both Sides)", 9, 88.15], ["Lane Transition (4 to 2)", 11, 88.16]]);
   assert.match(readFileSync(resolve(roadPackPluginDirectory, "Source", "MKIRoads", "Private", "MKIRoadJunction.cpp"), "utf8"), /TArray<FVector2D> Directions = \{ FVector2D\(1\.0, 0\.0\) \};\n\t+if \(Arms >= 3\) Directions\.Add\(FVector2D\(-1\.0, 0\.0\)\);/);
   for (const item of entries) {
     assert.equal(item.parentClass, "/Script/MKIRoads.MKIRoadJunction");
@@ -942,7 +1030,7 @@ test("road intersections: 2-, 3-, and 4-way pieces with 8 m aprons and square co
   assert.match(road, /if \(Junction->NearSide\(HitResult\.Location, OnSide, Outward, bArm\) && bArm && !Outward\.IsNearlyZero\(\)\)/);
   assert.match(road, /const int32 SourceLanes = Aim\.Junction\.IsValid\(\) \? Aim\.JunctionLanes :/);
   // The hologram: an arm joins an aimed road end (scroll picks it), the width follows the road's; Plus/Minus step 1, 2, 4.
-  assert.match(hologram, /SetActorTransform\(FaceSideToEnd\(ArmCount\(\), mLanes, mQuarterTurns, End, Outward\.GetSafeNormal2D\(\)\)\);/);
+  assert.match(hologram, /SetActorTransform\(FaceSideToEnd\(ArmCount\(\), mLanes, JoinTurn\(Road->GetLanes\(\)\), End, Outward\.GetSafeNormal2D\(\)\)\);/);
   assert.match(hologram, /SetLanes\(AMKIRoadSplineRoadHologram::StepLanes\(mLanes, 1\)\);/);
   assert.match(hologram, /return AMKIRoadJunction::FoundationEquivalents\(ArmCount\(\), mLanes\);/);
   // The maintainer: it could not be placed on foundations; its top sat on theirs, the deck inside them. It rests on top, as a road.
@@ -1028,7 +1116,7 @@ test("turnaround: a round road end looping each arriving lane back to its leavin
   // Paths: two halves per arriving lane (no path starts and ends on one node); no crosswalk or stop line, an island ring.
   assert.match(paths, /if \(Junction\.GetArmCount\(\) == 1\)[\s\S]*AMKIRoadJunction::TurnaroundLoops\(Lanes, Halves\);/);
   assert.match(junction, /OutHalves\.Add\(MoveTemp\(In\)\);\s*OutHalves\.Add\(MoveTemp\(Back\)\);/);
-  assert.match(junction, /\(Shape\.bTurnaround \|\| Shape\.bTruckDepot \? TArray<FMKIRoadJunctionArm>\(\) : Shape\.Arms\)/);
+  assert.match(junction, /\(Shape\.bTurnaround \|\| Shape\.bTruckDepot \|\| Shape\.bLaneTransition \? TArray<FMKIRoadJunctionArm>\(\) : Shape\.Arms\)/);
   assert.match(junction, /const float Island = TurnaroundIslandRadiusCm\(\) - Pattern->LineWidthCm \* 0\.5f;/);
 
   // The loop geometry, as TurnaroundLoops lays it: continuous, smooth, back on the leaving lane, and on the deck.
@@ -1069,8 +1157,37 @@ test("turnaround: a round road end looping each arriving lane back to its leavin
   }
 });
 
+test("a 4-to-2 lane transition: the outer lane of each direction tapers out and merges, the other way it splits (2026-10-23)", () => {
+  const kit = roadKit(), entry = roadJunctionEntries(kit).find((item) => item.arms === 11);
+  const read = (file: string) => readFileSync(resolve(roadPackPluginDirectory, "Source", "MKIRoads", file), "utf8");
+  const header = read("Public/MKIRoadJunction.h"), junction = read("Private/MKIRoadJunction.cpp"), paths = read("Private/MKIRoadAutoPaths.cpp"), hologram = read("Private/MKIRoadJunctionHologram.cpp");
+  // The maintainer: a 4-to-2 way conversion for lanes; one entry, rotated to face either way.
+  assert.equal(entry?.displayName, "Lane Transition (4 to 2)");
+  assert.equal(entry?.classPath, "/MKIRoads/SplineRoad/Build_MKIR_LaneTransition4To2.Build_MKIR_LaneTransition4To2_C");
+  assert.match(header, /static constexpr int32 LaneTransitionShape = 11;/);
+  // The maintainer: 32 m, a 24 m taper on the 4-lane width, then an 8 m 2-lane neck; whole 8 m tiles both.
+  const taper = Number(/TransitionTaperCm = (\d+)\.f;/.exec(header)?.[1]), neck = Number(/TransitionNeckCm = (\d+)\.f;/.exec(header)?.[1]);
+  assert.equal(taper + neck, 3200);
+  assert.equal(taper % 800, 0); assert.equal(neck % 800, 0);
+  // Each end its own width: a road or piece joined there takes it, and the hologram turns that end to it.
+  assert.match(junction, /Out\.Arms\.Add\(\{ FVector2D\(-Reach, 0\.0\), FVector2D\(-1\.0, 0\.0\), AMKIRoadJunction::TransitionWideLanes \}\);\s*Out\.Arms\.Add\(\{ FVector2D\(Reach, 0\.0\), FVector2D\(1\.0, 0\.0\), AMKIRoadJunction::TransitionNarrowLanes \}\);/);
+  assert.match(junction, /Lanes = Arm\.Lanes > 0 \? Arm\.Lanes : mLanes;/);
+  assert.match(hologram, /if \(Lanes == AMKIRoadJunction::TransitionNarrowLanes\) return 0;\s*if \(Lanes == AMKIRoadJunction::TransitionWideLanes\) return 2;/);
+  // Plus and Minus do nothing: the width is fixed.
+  assert.match(junction, /if \(IsLaneTransitionShape\(mArms\)\) mLanes = TransitionWideLanes;\s*else if \(IsSupportedLaneCount\(Lanes\)\) mLanes = Lanes;/);
+  assert.match(hologram, /if \(AMKIRoadJunction::IsLaneTransitionShape\(ArmCount\(\)\)\) Lanes = AMKIRoadJunction::TransitionWideLanes;/);
+  // Its own paths: through, merge bend and neck one way, the mirror the other, all meeting at the taper's end.
+  assert.match(paths, /if \(Junction\.IsLaneTransition\(\)\)\s*\{[\s\S]*?AMKIRoadJunction::LaneTransitionPaths\(Local\);/);
+  assert.match(junction, /for \(TArray<TPair<FVector2D, FVector2D>>\* Path : \{ &Through, &Merge, &Neck \}\) OutPaths\.Add\(\*Path\);\s*for \(TArray<TPair<FVector2D, FVector2D>>\* Path : \{ &Neck, &Through, &Merge \}\) OutPaths\.Add\(MirrorReversed\(\*Path\)\);/);
+  // The merge bend: two arcs across one 8 m lane over the taper, far gentler than the depot's 17 m bends trucks already drive.
+  const r = (taper * taper + 800 * 800) / (4 * 800), depot = (1700 * 1700 + 800 * 800) / (4 * 800);
+  assert.ok(r >= 2000 && r > depot, `merge bend radius ${r} cm`);
+  // Markings: no crosswalk or STOP, a taper line with hatching beyond it, and the dotted lane-drop line.
+  assert.match(junction, /if \(Shape\.bLaneTransition\)\s*\{[\s\S]*?ClipHalfPlane\(Lane, Out,[\s\S]*?HatchPeriodCm[\s\S]*?TransitionDropLineCm/);
+});
+
 test("truck depots: one side or both, each joined to its stations (#237, #240, #250, #256)", () => {
-  const kit = roadKit(), entries = roadJunctionEntries(kit).filter((item) => item.arms >= 6);
+  const kit = roadKit(), entries = roadJunctionEntries(kit).filter((item) => item.arms === 7 || item.arms === 9);
   const read0 = (file: string) => readFileSync(resolve(roadPackPluginDirectory, "Source", "MKIRoads", file), "utf8");
   // The maintainer: depots that include the road and paths (#237); a small footprint (#239); a small depot and a large one with a
   // bay, each also on both sides of the road, and a depot at the end of a turnaround (#240).
@@ -1130,7 +1247,9 @@ test("every road piece snaps to the others and takes their lanes, once per piece
   const source = resolve(roadPackPluginDirectory, "Source", "MKIRoads");
   const hologram = readFileSync(resolve(source, "Private", "MKIRoadJunctionHologram.cpp"), "utf8"), road = readFileSync(resolve(source, "Private", "MKIRoadSplineRoadHologram.cpp"), "utf8");
   // The maintainer: a turnaround did not snap to an intersection; every piece should snap to every other and take its lanes.
-  assert.match(hologram, /if \(const AMKIRoadJunction\* Other = AMKIRoadJunction::FromActor\(HitActor\)\)[\s\S]*if \(bArm\) TakeLanesFrom\(Other, Other->GetLanes\(\)\);[\s\S]*SetActorTransform\(FaceSideToEnd\(ArmCount\(\), mLanes, mQuarterTurns, OnSide, Outward\)\);/);
+  // An arm's own width (a lane transition's two ends differ), and the side of that width turned to it.
+  assert.match(hologram, /if \(const AMKIRoadJunction\* Other = AMKIRoadJunction::FromActor\(HitActor\)\)[\s\S]*const int32 ArmLanes = bArm \? Other->GetLanesAtArm\(OnSide\) : 0;\s*if \(bArm\) TakeLanesFrom\(Other, ArmLanes\);[\s\S]*SetActorTransform\(FaceSideToEnd\(ArmCount\(\), mLanes, bArm \? JoinTurn\(ArmLanes\) : mQuarterTurns, OnSide, Outward\)\);/);
+  assert.match(road, /Result\.JunctionLanes = Junction->GetLanesAtArm\(OnSide\);/);
   assert.match(hologram, /TakeLanesFrom\(Road, Road->GetLanes\(\)\);/);
   assert.match(hologram, /if \(Source == mLanesTakenFrom\.Get\(\)\) return;/);
   // A road from a road end takes that road's lanes, from an arm the piece's; once per piece, so Plus and Minus still work.
@@ -1271,7 +1390,7 @@ test("road piece icons carry the road's lines, and the depot's its pad (#252)", 
   // The maintainer: make the road parts' icons as illustrative as the Road's, with road lines.
   assert.match(icons, /function roadPieceLine\(x: number, y: number, arms: number, half: number, pair: number, dash: number\): number/);
   // #316: white trims to the edge, filled curb corners and turnaround surround.
-  assert.match(icons, /const marking = curb \|\| surround \|\| stub \|\| \(!keepsNear && !atArmEnd && !corner\) \? 2 : roadPieceLine\(x, y, arms, half, pair, dash\);/);
+  assert.match(icons, /const marking = curb \|\| surround \|\| stub \|\| taper \|\| \(!keepsNear && !atArmEnd && !corner\) \? 2 : roadPieceLine\(x, y, arms, half, pair, dash\);/);
   // #314: square corner tiles with the curb painted, and a square turnaround.
   assert.match(icons, /if \(arms === 1\) return ax <= 2 && ay <= 2;/);
   assert.match(icons, /function onDepotPad\(x: number, y: number, arms: number\): boolean/);
@@ -1393,7 +1512,7 @@ test("road supports stand under intersections, turnarounds and depots too (#320)
 test("a truck station snapped to a dock or road clears its legs, and the pad stripes are pattern paint (#321, #322)", () => {
   const snap = read255("Private/MKIRoadBuildSnap.cpp"), junction = read255("Private/MKIRoadJunction.cpp");
   // #321 (the maintainer: placed by hand, a station's legs reached under the platform): both station snaps clear the legs.
-  assert.match(snap, /if \(UFGFactoryLegsComponent\* Legs = Cast<UFGFactoryLegsComponent>\(LegsProperty->GetObjectPropertyValue_InContainer\(Hologram\)\)\) Legs->SetFeetOffsetsToZero\(\);/);
+  assert.match(snap, /FMKIRoadBuildSnap::ClearLiveLegs\(Cast<UFGFactoryLegsComponent>\(LegsProperty->GetObjectPropertyValue_InContainer\(Hologram\)\), Hologram\);/);
   assert.equal((snap.match(/ClearHologramLegs\(Hologram\);/g) ?? []).length, 2, "the depot dock and the road snap");
   // #322 (the maintainer: every road marking part of the pattern): the stripes are drawn into the pattern's paint, not their own mesh.
   assert.match(junction, /Count \+= PadStripeGeometry\(Arms, Lanes, Paint\[0\]\);/);
@@ -1410,7 +1529,20 @@ test("the bridge reports a building's leg offsets so a station on a deck can be 
 test("a depot clears the legs of a station already standing on its dock (#321)", () => {
   const junction = read255("Private/MKIRoadJunction.cpp");
   // Live: the maintainer's two hand-placed stations reported feet up to 4.3 m under the deck; the depot clears them.
-  assert.match(junction, /for \(const FFeetOffset& Foot : Legs->GetCachedFeetOffsets\(\)\) bLegs \|= FMath::Abs\(Foot\.OffsetZ\) > 1\.f;\s*if \(bLegs\) Legs->SetFeetOffsetsToZero\(\);/);
+  assert.match(junction, /for \(const FFeetOffset& Foot : Legs->GetCachedFeetOffsets\(\)\) bLegs \|= FMath::Abs\(Foot\.OffsetZ\) > 1\.f;\s*if \(bLegs\) FMKIRoadBuildSnap::ClearLiveLegs\(Legs, \*It\);/);
+});
+
+test("legs are zeroed only on the hologram's or station's own live component, never a shared one (#403)", () => {
+  const snap = read255("Private/MKIRoadBuildSnap.cpp"), junction = read255("Private/MKIRoadJunction.cpp");
+  // The maintainer (2026-10-24): after truck stations were placed, every legged hologram hovered; zeroing a template's,
+  // class default's or another actor's legs would leak into every later hologram. ClearLiveLegs refuses all of those.
+  const clear = snap.slice(snap.indexOf("bool FMKIRoadBuildSnap::ClearLiveLegs("), snap.indexOf("bool FMKIRoadBuildSnap::SnapDockingStationHologram("));
+  assert.match(clear, /Legs->IsTemplate\(\) \|\| Legs->HasAnyFlags\(RF_ClassDefaultObject \| RF_ArchetypeObject\) \|\| Owner->IsTemplate\(\) \|\| Owner->HasAnyFlags\(RF_ClassDefaultObject \| RF_ArchetypeObject\)/);
+  assert.match(clear, /if \(bShared \|\| Legs->GetOwner\(\) != Owner\)\n\t\{[\s\S]*?return false;\n\t\}\n\tLegs->SetFeetOffsetsToZero\(\);\n\treturn true;/);
+  // Negative: nothing else in MKI Roads zeroes legs directly.
+  const sources = ["MKIRoadBuildSnap.cpp", "MKIRoadJunction.cpp"].map((name) => read255(`Private/${name}`)).join("\n");
+  assert.equal((sources.match(/SetFeetOffsetsToZero\(\)/g) ?? []).length, 1, "only ClearLiveLegs calls SetFeetOffsetsToZero");
+  assert.doesNotMatch(junction, /Legs->SetFeetOffsetsToZero/);
 });
 
 test("every pre-rename name (AI RoadPack, MKI RoadPack) redirects to an asset or class the mod still has", () => {
@@ -1418,7 +1550,10 @@ test("every pre-rename name (AI RoadPack, MKI RoadPack) redirects to an asset or
   const redirects = [...source.matchAll(/\{ ECoreRedirectFlags::Type_(\w+), TEXT\("([^"]+)"\), TEXT\("([^"]+)"\) \}/g)].map(([, type, from, to]) => ({ type: type!, from: from!, to: to! }));
   const packages = new Set(roadPackAssetPackages(roadKit()));
   // Every content package and Blueprint class the mod builds is reached from its old name, and every target exists.
+  // Pieces added after the rename had no old name.
+  const sinceRename = ["LaneTransition4To2", "StreetLightDouble"];
   for (const path of packages) {
+    if (sinceRename.some((stem) => path.endsWith(`_MKIR_${stem}`))) continue;
     assert.ok(redirects.some((r) => r.type === "Package" && r.to === path), `${path} has no redirect from its old name`);
     const name = path.split("/").pop()!;
     if (/^(Build|Desc|Recipe|Schematic)_/.test(name)) assert.ok(redirects.some((r) => r.type === "Class" && r.to === `${path}.${name}_C`), `${name}_C has no class redirect`);
@@ -1528,7 +1663,9 @@ test("a snapped intersection turns to any side, not only an arm, so it can run a
   assert.match(body, /Bounds \+= Corner;/, "a blank side's middle comes from the piece's outline");
   assert.match(body, /if \(FVector2D::DotProduct\(Arm\.Outward\.GetSafeNormal\(\), Side\) > 0\.99\) \{ Contact = Arm\.Center; break; \}/, "an arm on that side still joins with its end on the point");
   assert.doesNotMatch(hologram, /JoinArmToEnd|Shape\.Arms\[\(\(ArmIndex/, "the turn no longer picks among the arms only");
-  assert.equal((hologram.match(/SetActorTransform\(FaceSideToEnd\(ArmCount\(\), mLanes, mQuarterTurns,/g) ?? []).length, 3, "road ends, other pieces' arms and foundation edges");
+  // Road ends, other pieces' arms and foundation edges: the scroll's side, but a lane transition's end of the joined width (JoinTurn).
+  assert.equal((hologram.match(/SetActorTransform\(FaceSideToEnd\(ArmCount\(\), mLanes, (?:mQuarterTurns|JoinTurn\(Road->GetLanes\(\)\)|bArm \? JoinTurn\(ArmLanes\) : mQuarterTurns),/g) ?? []).length, 3, "road ends, other pieces' arms and foundation edges");
+  assert.match(hologram, /int32 AMKIRoadJunctionHologram::JoinTurn\(int32 Lanes\) const\s*\{[^}]*if \(!AMKIRoadJunction::IsLaneTransitionShape\(ArmCount\(\)\)\) return mQuarterTurns;/, "only a lane transition overrides the scroll");
 });
 
 test("the foundation edge snap reaches 2 m in from the edge", () => {
@@ -1633,4 +1770,61 @@ test("the MKI Roads milestone: named MKI Roads, Tier 3 beside Vehicular Transpor
   const document = JSON.parse(readFileSync(join(roadPackDirectory, "modules.json"), "utf8"));
   document.package.schematic.cost = [{ item: "/MKIRoads/Thing.Thing_C", amount: 0 }];
   assert.throws(() => parseRoadKitDocument(document));
+});
+
+test("road pieces have the paths around them validated again once their floor stands and when they go (#396)", () => {
+  const source = resolve(roadPackPluginDirectory, "Source", "MKIRoads");
+  const read = (file: string) => readFileSync(resolve(source, file), "utf8");
+  const paths = read("Private/MKIRoadAutoPaths.cpp"), road = read("Private/MKIRoadSplineRoad.cpp"), junction = read("Private/MKIRoadJunction.cpp");
+  // Live: a piece's paths ending where a later piece was built kept their no_floor validation from when they were laid.
+  const around = /void FMKIRoadAutoPaths::RevalidateAround\(UWorld\* World, const FBox& Bounds\)\n\{([\s\S]*?)\n\}/.exec(paths)?.[1] ?? "";
+  assert.match(around, /World->GetNetMode\(\) == NM_Client/, "the server validates, not a client");
+  assert.match(around, /Vehicles->InvalidateVehiclePathsInVolume\(Bounds\.ExpandBy\(RevalidateMarginCm\)\);/);
+  assert.match(read("Public/MKIRoadAutoPaths.h"), /static constexpr float RevalidateMarginCm = 1000\.f;/);
+  // A removed piece: next tick, holding the world (the piece is going), not the piece.
+  const removal = /void FMKIRoadAutoPaths::RevalidateAfterRemoval\(UWorld\* World, const FBox& Bounds\)\n\{([\s\S]*?)\n\}/.exec(paths)?.[1] ?? "";
+  assert.match(removal, /SetTimerForNextTick\(FTimerDelegate::CreateLambda\(\[WeakWorld, Bounds\]\(\) \{ RevalidateAround\(WeakWorld\.Get\(\), Bounds\); \}\)\);/);
+  assert.doesNotMatch(removal, /this/);
+  for (const [name, text, cls] of [["road", road, "AMKIRoadSplineRoad"], ["junction", junction, "AMKIRoadJunction"]] as const) {
+    const begin = new RegExp(String.raw`void ${cls}::BeginPlay\(\)\n\{([\s\S]*?)\n\}\n`).exec(text)?.[1] ?? "";
+    // Once per piece (saved), only after its own paths are laid at the current version.
+    assert.match(begin, /if \(HasAuthority\(\) && !mNearbyPathsRevalidated\)/, `${name}: once, on the server`);
+    assert.match(begin, /mAutoPathsVersion < FMKIRoadAutoPaths::Version[^\n]*\) return;\n[\s\S]*?FMKIRoadAutoPaths::RevalidateAround\(GetWorld\(\), GetComponentsBoundingBox\(true\)\);\n\t*mNearbyPathsRevalidated = true;/, `${name}: after its paths`);
+    const dismantle = new RegExp(String.raw`void ${cls}::Dismantle_Implementation\(\)\n\{([\s\S]*?)\n\}`).exec(text)?.[1] ?? "";
+    assert.match(dismantle, /FMKIRoadAutoPaths::RevalidateAfterRemoval\(GetWorld\(\), GetComponentsBoundingBox\(true\)\);\n\t\}\n\tSuper::Dismantle_Implementation\(\);/, `${name}: on dismantle, before it goes`);
+    // Negative control: validation is never switched off for the auto paths.
+    assert.doesNotMatch(text, /SetLegacyConvertedPath/, `${name} keeps path validation`);
+  }
+  assert.match(junction, /mTiles\.Num\(\) == 0\) return;/, "a junction waits for its squares");
+  assert.doesNotMatch(paths, /SetLegacyConvertedPath/);
+  for (const header of ["Public/MKIRoadSplineRoad.h", "Public/MKIRoadJunction.h"]) assert.match(read(header), /UPROPERTY\(SaveGame\)\n\tbool mNearbyPathsRevalidated = false;/, header);
+});
+
+test("4-lane truck depots lay lane switches in each direction, once, without doubling hand-laid ones", () => {
+  const source = resolve(roadPackPluginDirectory, "Source", "MKIRoads");
+  const read = (file: string) => readFileSync(resolve(source, file), "utf8");
+  const junction = read("Private/MKIRoadJunction.cpp"), paths = read("Private/MKIRoadAutoPaths.cpp"), header = read("Public/MKIRoadJunction.h");
+  const switches = /void AMKIRoadJunction::DepotLaneSwitchPaths\(int32 Lanes, TArray<TArray<TPair<FVector2D, FVector2D>>>& OutPaths\)\n\{([\s\S]*?)\n\}/.exec(junction)?.[1] ?? "";
+  // The maintainer's hand-laid switches: inner to outer and outer to inner each way, end to end over the 48 m depot.
+  assert.match(switches, /if \(Lanes != 4\) return;/, "none on a 2-lane depot");
+  assert.match(switches, /BayBendArcs\(2\.0 \* Reach, Outer - Inner, R, Theta\);/);
+  assert.match(switches, /Reach = DepotHalfLengthCm, Inner = Width \* 0\.5, Outer = Width \* 1\.5;/);
+  assert.equal((switches.match(/AddArc\(/g) ?? []).length, 4, "two bends of two arcs");
+  assert.match(switches, /OutPaths\.Add\(MirrorReversed\(\*Path\)\);/, "and the -X direction's");
+  // New depots lay them with their paths; older ones once, skipping a switch already between the same ends.
+  assert.match(paths, /AMKIRoadJunction::DepotPaths\(Junction\.GetArmCount\(\), Lanes, Local\);\n\t\tAMKIRoadJunction::DepotLaneSwitchPaths\(Lanes, Local\);/);
+  assert.match(junction, /mAutoPathsVersion = FMKIRoadAutoPaths::Version;\n[^\n]*\n\tmLaneSwitchesLaid = true;/);
+  const lay = /void AMKIRoadJunction::LayLaneSwitches\(\)\n\{([\s\S]*?)\n\}/.exec(junction)?.[1] ?? "";
+  assert.match(lay, /if \(mLaneSwitchesLaid \|\| !IsTruckDepot\(\) \|\| !HasAuthority\(\) \|\| IsActorBeingDestroyed\(\) \|\| mAutoPathsVersion < FMKIRoadAutoPaths::Version\) return;/);
+  assert.match(lay, /if \(!FMKIRoadAutoPaths::HasPathBetween\(GetWorld\(\), Path\[0\]\.Location, Path\.Last\(\)\.Location\)\) Missing\.Add/);
+  assert.match(lay, /FMKIRoadAutoPaths::Spawn\(GetWorld\(\), Missing, Segments\);[\s\S]*mAutoPaths\.Add\(Segment\);[\s\S]*mLaneSwitchesLaid = true;/, "the depot owns them (dismantled with it)");
+  assert.match(header, /UPROPERTY\(SaveGame\)\n\tbool mLaneSwitchesLaid = false;/);
+  assert.match(junction, /IsTruckDepot\(\) && !mLaneSwitchesLaid && mAutoPathsVersion >= FMKIRoadAutoPaths::Version\)[\s\S]{0,200}LayLaneSwitches\(\);/);
+  // Negative controls: existing paths are not relaid for this (the version stays), and a dock's relay never touches the switches.
+  assert.match(read("Public/MKIRoadAutoPaths.h"), /static constexpr int32 Version = 9;/);
+  const dock = /void FMKIRoadAutoPaths::DepotDockPaths\([\s\S]*?\n\}/.exec(paths)?.[0] ?? "";
+  assert.doesNotMatch(dock, /DepotLaneSwitchPaths/);
+  const between = /bool FMKIRoadAutoPaths::HasPathBetween\([\s\S]*?\n\}/.exec(paths)?.[0] ?? "";
+  assert.match(between, /IsValid\(\*It\) && !It->IsActorBeingDestroyed\(\)/, "a path being removed does not count");
+  assert.match(between, /<= JoinRadiusCm && [^\n]*<= JoinRadiusCm\) return true;/, "both ends must match");
 });

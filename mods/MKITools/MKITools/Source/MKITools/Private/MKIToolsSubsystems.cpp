@@ -3,6 +3,7 @@
 #include "Configuration/ConfigManager.h"
 #include "Engine/GameInstance.h"
 #include "MKIToolsConfiguration.h"
+#include "MKIToolsOptionsMenu.h"
 #include "MKIPlayerSubsystem.h"
 #include "MKIRegrowthSubsystem.h"
 #include "MKITerrainSubsystem.h"
@@ -17,13 +18,22 @@ void UMKIToolsGameInstanceSubsystem::Initialize(FSubsystemCollectionBase& Collec
 	{
 		Registry->RegisterRemoteCallObject(UMKIToolsRemoteCallObject::StaticClass());
 	}
-	// MKI Tools' options under Mods > MKI Tools, loaded from disk as SML registers them at startup.
+	// MKI Tools' options, loaded from disk as SML registers them at startup, and shown under Options > MKI Tools.
 	if (UConfigManager* Config = Collection.InitializeDependency<UConfigManager>())
 	{
 		UMKIToolsConfiguration::BuildOptions();
 		Config->RegisterModConfiguration(UMKIToolsConfiguration::StaticClass());
 		UMKIToolsConfiguration::AdoptOptions(Config);
+		OptionsMenu = NewObject<UMKIToolsOptionsMenu>(this);
+		OptionsMenu->Start(GetGameInstance());
 	}
+}
+
+void UMKIToolsGameInstanceSubsystem::Deinitialize()
+{
+	if (OptionsMenu) OptionsMenu->Stop();
+	OptionsMenu = nullptr;
+	Super::Deinitialize();
 }
 
 bool UMKIToolsWorldSubsystem::ShouldCreateSubsystem(UObject* Outer) const

@@ -10,6 +10,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "WheeledVehicles/FGVehiclePathNode.h"
 #include "WheeledVehicles/FGVehiclePathSegment.h"
+#include "TimerManager.h"
+#include "WheeledVehicles/FGVehicleSubsystem.h"
 
 namespace
 {
@@ -129,6 +131,15 @@ void FMKIRoadAutoPaths::JunctionPaths(const AMKIRoadJunction& Junction, TArray<T
 		// A truck depot (#237, #239, #240): its lanes, bays, or loops, each path through a dock in halves meeting there.
 		TArray<TArray<TPair<FVector2D, FVector2D>>> Local;
 		AMKIRoadJunction::DepotPaths(Junction.GetArmCount(), Lanes, Local);
+		AMKIRoadJunction::DepotLaneSwitchPaths(Lanes, Local);
+		ToWorld(Local, OutPaths);
+		return;
+	}
+	if (Junction.IsLaneTransition())
+	{
+		// A lane transition: its through lanes, and the outer lanes merging in and splitting out where the taper ends.
+		TArray<TArray<TPair<FVector2D, FVector2D>>> Local;
+		AMKIRoadJunction::LaneTransitionPaths(Local);
 		ToWorld(Local, OutPaths);
 		return;
 	}
@@ -180,6 +191,18 @@ void FMKIRoadAutoPaths::LocalToWorld(const AMKIRoadJunction& Junction, const TAr
 	}
 }
 
+bool FMKIRoadAutoPaths::HasPathBetween(UWorld* World, const FVector& Start, const FVector& End)
+{
+	if (!World) return false;
+	for (TActorIterator<AFGVehiclePathSegment> It(World); It; ++It)
+	{
+		const USplineComponent* Spline = IsValid(*It) && !It->IsActorBeingDestroyed() ? It->GetSplineComponent() : nullptr;
+		if (!Spline || Spline->GetNumberOfSplinePoints() < 2) continue;
+		if (FVector::Dist(Spline->GetLocationAtSplinePoint(0, ESplineCoordinateSpace::World), Start) <= JoinRadiusCm && FVector::Dist(Spline->GetLocationAtSplinePoint(Spline->GetNumberOfSplinePoints() - 1, ESplineCoordinateSpace::World), End) <= JoinRadiusCm) return true;
+	}
+	return false;
+}
+
 bool FMKIRoadAutoPaths::HasStandingStation(UWorld* World, const FVector& Location)
 {
 	for (TActorIterator<AFGBuildableDockingStation> It(World); It; ++It)
@@ -187,6 +210,23 @@ bool FMKIRoadAutoPaths::HasStandingStation(UWorld* World, const FVector& Locatio
 		if (IsValid(*It) && !It->IsActorBeingDestroyed() && FVector::Dist(It->GetActorLocation(), Location) <= 2.f * JoinRadiusCm) return true;
 	}
 	return false;
+}
+
+void FMKIRoadAutoPaths::RevalidateAround(UWorld* World, const FBox& Bounds)
+{
+	if (!World || World->GetNetMode() == NM_Client || !Bounds.IsValid) return;
+	AFGVehicleSubsystem* Vehicles = AFGVehicleSubsystem::Get(World);
+	if (!Vehicles) return;
+	// The game's own batched re-validation, the one /v1/vehicle-paths/revalidate runs (#312).
+	Vehicles->InvalidateVehiclePathsInVolume(Bounds.ExpandBy(RevalidateMarginCm));
+}
+
+void FMKIRoadAutoPaths::RevalidateAfterRemoval(UWorld* World, const FBox& Bounds)
+{
+	if (!World || World->GetNetMode() == NM_Client || !Bounds.IsValid) return;
+	// The piece is going: the timer holds the world, not the piece.
+	const TWeakObjectPtr<UWorld> WeakWorld(World);
+	World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateLambda([WeakWorld, Bounds]() { RevalidateAround(WeakWorld.Get(), Bounds); }));
 }
 
 void FMKIRoadAutoPaths::Spawn(UWorld* World, const TArray<TArray<FSplinePointData>>& Paths, TArray<AFGVehiclePathSegment*>& OutSegments)

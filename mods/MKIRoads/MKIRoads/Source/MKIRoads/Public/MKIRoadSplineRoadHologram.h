@@ -67,7 +67,8 @@ struct FMKIRoadSplinePlan
  * rail; from a free start it is straight. Snapping the end to another road end makes it meet that end's heading too.
  * Grades ease between the ends' own grades. Holding the build gun's snap modifier (Ctrl), as for vanilla rail, is straight
  * mode: the road runs straight ahead along the start's heading, as far as the aim reaches along it, whatever the aim's
- * sideways offset.
+ * sideways offset. Holding Shift is level mode (#392): the end sits at the start's height and the road is flat end to end;
+ * Ctrl and Shift together are straight and level.
  *
  * On a foundation's top a free start or end snaps to the foundation's 1 m grid, in its own frame, and a free start's
  * heading to the foundation's axes (and, rotated, to the rotation step from them).
@@ -108,9 +109,14 @@ public:
 	static bool FoundationEdgeEnd(const AFGBuildableFoundation& Foundation, const FHitResult& HitResult, const AActor* Ignore, FVector& OutLocation, FVector& OutOutward);
 	/** Cross-section spacing of the preview deck (the built deck uses AMKIRoadSplineRoad::DeckStepCm). */
 	static constexpr float PreviewStepCm = 50.f;
-	/** Priority of the transient Plus/Minus mapping context, above the build gun's. */
+	/** Priority of the transient Plus/Minus (and Shift) mapping context, above the build gun's. */
 	static constexpr int32 LaneInputPriority = 100;
 
+	/**
+	 * Level mode's ends (#392): both at Start's height with no grade. An End snapped at another height no longer joins
+	 * that end; it becomes a free point there.
+	 */
+	static void LevelEnds(FMKIRoadSplineEnd& Start, FMKIRoadSplineEnd& End);
 	/** The spline points (local to Origin) and facts of a road from Start to End. bStraight ignores fixed headings. */
 	static FMKIRoadSplinePlan PlanRoad(const FMKIRoadSplineEnd& Start, const FMKIRoadSplineEnd& End, const FVector& Origin, bool bStraight, int32 Lanes);
 	/** Length, grade, and radius facts of saved spline points (what validation and the cost read). */
@@ -143,6 +149,10 @@ public:
 	void SetStraightMode(bool bStraight);
 	UFUNCTION(BlueprintPure, Category = "MKI Roads|Spline Road")
 	bool IsStraightMode() const { return mStraightMode; }
+	UFUNCTION(BlueprintCallable, Category = "MKI Roads|Spline Road")
+	void SetLevelMode(bool bLevel);
+	UFUNCTION(BlueprintPure, Category = "MKI Roads|Spline Road")
+	bool IsLevelMode() const { return mLevelMode; }
 	/** The heading the preview points along before the first click (the start's), or the end's arrival heading after it. */
 	UFUNCTION(BlueprintPure, Category = "MKI Roads|Spline Road")
 	float GetPreviewHeadingYaw() const;
@@ -217,6 +227,9 @@ protected:
 
 	UPROPERTY(CustomSerialization)
 	bool mStraightMode = false;
+	/** Shift held (#392): the road is level. */
+	UPROPERTY(CustomSerialization)
+	bool mLevelMode = false;
 
 	/** The planned end lies behind a fixed start heading (carried in the construct message). */
 	bool mTurnTooSharp = false;
@@ -260,6 +273,8 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> mMinusAction;
 	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> mLevelAction;
+	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> mLaneMappingContext;
 	TWeakObjectPtr<APlayerController> mLaneInputController;
 	/**
@@ -291,4 +306,6 @@ private:
 	void UnregisterLaneInput();
 	void OnPlus(const FInputActionValue& Value);
 	void OnMinus(const FInputActionValue& Value);
+	void OnLevelPressed(const FInputActionValue& Value);
+	void OnLevelReleased(const FInputActionValue& Value);
 };

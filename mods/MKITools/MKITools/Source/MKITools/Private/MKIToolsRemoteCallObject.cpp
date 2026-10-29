@@ -1,6 +1,7 @@
 #include "MKIToolsRemoteCallObject.h"
 
 #include "FGPlayerController.h"
+#include "MKIPlayerSubsystem.h"
 #include "MKITerrainRules.h"
 #include "MKITerrainSubsystem.h"
 #include "MKITools.h"
@@ -32,4 +33,9 @@ void UMKIToolsRemoteCallObject::Server_RemoveRockFoliage_Implementation(UHierarc
 	if (!Terrain) { UE_LOG(LogMKITools, Warning, TEXT("Terrain: no terrain subsystem on the server; boulder not removed")); return; }
 	FString Reason;
 	if (!Terrain->RemoveRockFoliageForPlayer(Foliage, Location, Controller, Reason)) { UE_LOG(LogMKITools, Warning, TEXT("Terrain: boulder at %s not removed: %s"), *Location.ToString(), *Reason); }
+}
+
+void UMKIToolsRemoteCallObject::Server_SetFillDepotFromInventory_Implementation(bool bFill)
+{
+	AMKIPlayerSubsystem::SetFillDepotFromInventory(GetOwnerPlayerController(), bFill);
 }

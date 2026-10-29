@@ -77,6 +77,21 @@ FVector AMKIRoadSplineRoadHologram::ProjectStraightEnd(const FVector& Start, con
 	return FVector(End.X, End.Y, Aim.Z);
 }
 
+void AMKIRoadSplineRoadHologram::LevelEnds(FMKIRoadSplineEnd& Start, FMKIRoadSplineEnd& End)
+{
+	Start.OutwardGrade = 0.f;
+	if (End.bSnapped && FMath::Abs(End.Location.Z - Start.Location.Z) > 1.f)
+	{
+		// A level road cannot join an end at another height: the end is a free point at the start's height instead.
+		End.bSnapped = End.bHeadingLocked = End.bFixedHeading = End.bOnEdge = false;
+		End.Road = nullptr;
+		End.Junction = nullptr;
+		End.JunctionLanes = 0;
+	}
+	End.Location.Z = Start.Location.Z;
+	End.OutwardGrade = 0.f;
+}
+
 float AMKIRoadSplineRoadHologram::AlignYawToFoundation(float Yaw, float FoundationYaw, float Step)
 {
 	const float Safe = Step > 0.f ? Step : 90.f;
@@ -219,7 +234,8 @@ FMKIRoadSplineEnd AMKIRoadSplineRoadHologram::ResolveEnd(const FHitResult& HitRe
 			Result.Outward = Outward;
 			Result.OutwardGrade = 0.f;
 			Result.Junction = const_cast<AMKIRoadJunction*>(Junction);
-			Result.JunctionLanes = Junction->GetLanes();
+			// The arm's own width (a lane transition's ends differ).
+			Result.JunctionLanes = Junction->GetLanesAtArm(OnSide);
 			return Result;
 		}
 	}
@@ -562,6 +578,7 @@ void AMKIRoadSplineRoadHologram::SerializeConstructMessage(FArchive& Ar, FNetCon
 	// The construction hologram rebuilds its facts from these, never from the placing hologram's private plan.
 	Ar << mLanes;
 	Ar << mStraightMode;
+	Ar << mLevelMode;
 	Ar << mTurnTooSharp;
 	int32 Count = mSplineData.Num();
 	Ar << Count;
@@ -582,6 +599,7 @@ void AMKIRoadSplineRoadHologram::SetupPendingConstructionHologram(AFGHologram* F
 	{
 		mLanes = From->mLanes;
 		mStraightMode = From->mStraightMode;
+		mLevelMode = From->mLevelMode;
 		mTurnTooSharp = From->mTurnTooSharp;
 		mBuildStep = From->mBuildStep;
 		mStart = From->mStart;
@@ -611,6 +629,14 @@ void AMKIRoadSplineRoadHologram::Replan()
 		End.Location = ProjectStraightEnd(Start.Location, Start.Outward, mEnd.Location, mEnd.bOnFoundation);
 		End.bFixedHeading = true;
 		End.Outward = -Start.Outward;
+		if (mLevelMode) LevelEnds(Start, End);
+		mPlan = PlanRoad(Start, End, GetActorLocation(), false, mLanes);
+	}
+	else if (mLevelMode)
+	{
+		// Level mode (Shift, #392): the end at the start's height, both grades flat.
+		FMKIRoadSplineEnd Start = mStart, End = mEnd;
+		LevelEnds(Start, End);
 		mPlan = PlanRoad(Start, End, GetActorLocation(), false, mLanes);
 	}
 	else mPlan = PlanRoad(mStart, mEnd, GetActorLocation(), false, mLanes);
@@ -856,11 +882,16 @@ void AMKIRoadSplineRoadHologram::RegisterLaneInput()
 	}
 	mPlusAction = NewObject<UInputAction>(this, TEXT("MKIRoadSplinePlus"));
 	mMinusAction = NewObject<UInputAction>(this, TEXT("MKIRoadSplineMinus"));
+	// Shift held is level mode (#392). It doesn't consume the key, so Shift still sprints.
+	mLevelAction = NewObject<UInputAction>(this, TEXT("MKIRoadSplineLevel"));
+	mLevelAction->bConsumeInput = false;
 	mLaneMappingContext = NewObject<UInputMappingContext>(this, TEXT("MKIRoadSplineLaneContext"));
 	mLaneMappingContext->MapKey(mPlusAction, EKeys::Add);
 	mLaneMappingContext->MapKey(mPlusAction, EKeys::Equals);
 	mLaneMappingContext->MapKey(mMinusAction, EKeys::Subtract);
 	mLaneMappingContext->MapKey(mMinusAction, EKeys::Hyphen);
+	mLaneMappingContext->MapKey(mLevelAction, EKeys::LeftShift);
+	mLaneMappingContext->MapKey(mLevelAction, EKeys::RightShift);
 	EnableInput(Controller);
 	UEnhancedInputComponent* Input = Cast<UEnhancedInputComponent>(InputComponent);
 	if (!Input)
@@ -871,6 +902,8 @@ void AMKIRoadSplineRoadHologram::RegisterLaneInput()
 	}
 	Input->BindAction(mPlusAction, ETriggerEvent::Started, this, &AMKIRoadSplineRoadHologram::OnPlus);
 	Input->BindAction(mMinusAction, ETriggerEvent::Started, this, &AMKIRoadSplineRoadHologram::OnMinus);
+	Input->BindAction(mLevelAction, ETriggerEvent::Started, this, &AMKIRoadSplineRoadHologram::OnLevelPressed);
+	Input->BindAction(mLevelAction, ETriggerEvent::Completed, this, &AMKIRoadSplineRoadHologram::OnLevelReleased);
 	Subsystem->AddMappingContext(mLaneMappingContext, LaneInputPriority);
 	mLaneInputController = Controller;
 }
@@ -897,6 +930,16 @@ void AMKIRoadSplineRoadHologram::OnMinus(const FInputActionValue& Value)
 	SetLanes(StepLanes(mLanes, -1));
 }
 
+void AMKIRoadSplineRoadHologram::OnLevelPressed(const FInputActionValue& Value)
+{
+	if (!mLevelMode) SetLevelMode(true);
+}
+
+void AMKIRoadSplineRoadHologram::OnLevelReleased(const FInputActionValue& Value)
+{
+	if (mLevelMode) SetLevelMode(false);
+}
+
 void AMKIRoadSplineRoadHologram::SetSnapToGuideLines(bool bIsEnabled)
 {
 	Super::SetSnapToGuideLines(bIsEnabled);
@@ -906,6 +949,13 @@ void AMKIRoadSplineRoadHologram::SetSnapToGuideLines(bool bIsEnabled)
 void AMKIRoadSplineRoadHologram::SetStraightMode(bool bStraight)
 {
 	mStraightMode = bStraight;
+	Replan();
+	UpdatePreview();
+}
+
+void AMKIRoadSplineRoadHologram::SetLevelMode(bool bLevel)
+{
+	mLevelMode = bLevel;
 	Replan();
 	UpdatePreview();
 }

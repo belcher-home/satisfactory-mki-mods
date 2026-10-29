@@ -5,6 +5,7 @@
 class AMKIRoadSplineRoad;
 class AFGBuildable;
 class AFGHologram;
+class UFGFactoryLegsComponent;
 
 /** The side of a road a piece goes on: its left edge, its centerline, or its right edge (seen along the road). */
 enum class EMKIRoadSide : uint8 { Left, Center, Right };
@@ -63,6 +64,14 @@ struct MKIROADS_API FMKIRoadBuildSnap
 	/** Snaps a vanilla truck station hologram aimed at a spline road (not at a vehicle path); false leaves it to vanilla. */
 	static bool SnapDockingStationHologram(AFGHologram* Hologram, const FHitResult& HitResult);
 
+	/**
+	 * Zeroes Owner's factory legs (SetFeetOffsetsToZero, #321), only when Legs is Owner's own live component: not a
+	 * template, class default or archetype, and owned by that very actor, which is not a template either (#403: after
+	 * truck stations were placed, every legged hologram hovered; zeroing shared legs would do that). Otherwise nothing
+	 * changes and the refusal is logged once. True when the legs were zeroed.
+	 */
+	static bool ClearLiveLegs(UFGFactoryLegsComponent* Legs, const AActor* Owner);
+
 	/** A street light pole's distance inside the deck edge, and its snap step along the road. */
 	static constexpr float LightEdgeInsetCm = 50.f;
 	static constexpr float LightStepCm = 400.f;
@@ -72,15 +81,22 @@ struct MKIROADS_API FMKIRoadBuildSnap
 	 * The maintainer: no separate road light; the vanilla street light works on roads in its stead. The third of the deck aimed at
 	 * picks the left edge, centerline, or right edge. The pole stands LightEdgeInsetCm inside that edge (or on the
 	 * centerline), snapped to LightStepCm along the road, its arm (the mesh's +Y) across the road toward the center (from
-	 * the centerline, toward the right), then turned ExtraYawDeg about the pole. False if the road has no spline.
+	 * the centerline, toward the right), then turned ExtraYawDeg about the pole. bCenterline (the Double Street Light,
+	 * #400) stands it on the centerline wherever the deck is aimed at. False if the road has no spline.
 	 */
-	static bool SnapStreetLight(const AMKIRoadSplineRoad& Road, const FVector& Hit, float ExtraYawDeg, FTransform& Out);
+	static bool SnapStreetLight(const AMKIRoadSplineRoad& Road, const FVector& Hit, float ExtraYawDeg, FTransform& Out, bool bCenterline = false);
 
-	/** Snaps a vanilla street light hologram aimed at a spline road; false leaves it to vanilla. */
+	/** Snaps a vanilla street light or Double Street Light hologram aimed at a spline road; false leaves it to vanilla. */
 	static bool SnapStreetLightHologram(AFGHologram* Hologram, const FHitResult& HitResult);
 
 	/** True for the vanilla street light (Build_StreetLight). */
 	static bool IsStreetLight(const UClass* BuildClass);
+
+	/**
+	 * True for the MKI Roads Double Street Light (#400): an arm and lamp each side of one pole, for the road's centerline
+	 * only. The maintainer: a street light for the road center with one electrical hook-up in line with the pole.
+	 */
+	static bool IsDoubleStreetLight(const UClass* BuildClass);
 
 	static constexpr float WallEdgeMarginCm = 5.f;
 

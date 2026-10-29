@@ -67,6 +67,7 @@ void UMKICollectNearbySubsystem::Scan(AFGCharacterPlayer* Character, float Radiu
 {
 	NearItems.Reset();
 	NearCrates.Reset();
+	NearFoliage.Reset();
 	const FVector Center = Character->GetActorLocation();
 	const double RadiusSq = FMath::Square(static_cast<double>(RadiusCm));
 	for (TActorIterator<AFGItemPickup> It(GetWorld()); It; ++It)
@@ -79,6 +80,25 @@ void UMKICollectNearbySubsystem::Scan(AFGCharacterPlayer* Character, float Radiu
 		const EFGCrateType Type = It->GetCrateType();
 		if ((Type == EFGCrateType::CT_DismantleCrate || Type == EFGCrateType::CT_DeathCrate) && FVector::DistSquared(It->GetActorLocation(), Center) <= RadiusSq) NearCrates.Add(*It);
 	}
+	// Collectible foliage, once per scan: at 100 m the foliage within the radius is far too much to ask for at every pickup.
+	AFGFoliageRemovalSubsystem* Removal = AFGFoliageRemovalSubsystem::Get(GetWorld());
+	if (!Removal) return;
+	TMap<UHierarchicalInstancedStaticMeshComponent*, TArray<int32>> Near;
+	Removal->GetFoliageWithinRadius(Center, RadiusCm, Near);
+	TArray<TPair<double, FNearFoliage>> Found;
+	for (const TPair<UHierarchicalInstancedStaticMeshComponent*, TArray<int32>>& Entry : Near)
+	{
+		if (!IsValid(Entry.Key) || !IsCollectibleFoliage(Entry.Key->GetStaticMesh())) continue;
+		if (!AFGFoliageRemovalSubsystem::HasIdentifier(Entry.Key, UFGFoliageIdentifier_Pickupable::StaticClass())) continue;
+		for (const int32 Instance : Entry.Value)
+		{
+			FTransform Transform;
+			if (!Entry.Key->GetInstanceTransform(Instance, Transform, true)) continue;
+			Found.Emplace(FVector::DistSquared(Transform.GetLocation(), Center), FNearFoliage{ Entry.Key, Instance, Transform.GetLocation() });
+		}
+	}
+	Found.Sort([](const TPair<double, FNearFoliage>& A, const TPair<double, FNearFoliage>& B) { return A.Key > B.Key; });
+	for (const TPair<double, FNearFoliage>& Entry : Found) NearFoliage.Add(Entry.Value);
 }
 
 bool UMKICollectNearbySubsystem::PickUpNext(AFGCharacterPlayer* Character, AFGFoliagePickup* Proxy, float RadiusCm)
@@ -92,31 +112,22 @@ bool UMKICollectNearbySubsystem::PickUpNext(AFGCharacterPlayer* Character, AFGFo
 		Proxy->DoPickup();
 		return true;
 	}
-	// Then the nearest collectible foliage instance.
-	AFGFoliageRemovalSubsystem* Removal = AFGFoliageRemovalSubsystem::Get(GetWorld());
-	if (!Removal) return false;
+	// Then the nearest collectible foliage instance the last scan found, if it is still where it was (an index can move
+	// when another instance goes) and still within the radius.
 	const FVector Center = Character->GetActorLocation();
-	TMap<UHierarchicalInstancedStaticMeshComponent*, TArray<int32>> Near;
-	Removal->GetFoliageWithinRadius(Center, RadiusCm, Near);
-	UHierarchicalInstancedStaticMeshComponent* Best = nullptr;
-	int32 BestInstance = INDEX_NONE;
-	double BestDistSq = TNumericLimits<double>::Max();
-	for (const TPair<UHierarchicalInstancedStaticMeshComponent*, TArray<int32>>& Entry : Near)
+	const double RadiusSq = FMath::Square(static_cast<double>(RadiusCm));
+	while (NearFoliage.Num() > 0)
 	{
-		if (!IsValid(Entry.Key) || !IsCollectibleFoliage(Entry.Key->GetStaticMesh())) continue;
-		if (!AFGFoliageRemovalSubsystem::HasIdentifier(Entry.Key, UFGFoliageIdentifier_Pickupable::StaticClass())) continue;
-		for (const int32 Instance : Entry.Value)
-		{
-			FTransform Transform;
-			if (!Entry.Key->GetInstanceTransform(Instance, Transform, true)) continue;
-			const double DistSq = FVector::DistSquared(Transform.GetLocation(), Center);
-			if (DistSq < BestDistSq) { BestDistSq = DistSq; Best = Entry.Key; BestInstance = Instance; }
-		}
+		const FNearFoliage Next = NearFoliage.Pop();
+		UHierarchicalInstancedStaticMeshComponent* Component = Next.Component.Get();
+		FTransform Transform;
+		if (!IsValid(Component) || !Component->GetInstanceTransform(Next.Instance, Transform, true)) continue;
+		if (!Transform.GetLocation().Equals(Next.Location, 1.0) || FVector::DistSquared(Next.Location, Center) > RadiusSq) continue;
+		Proxy->SetPickupData(Component, Next.Instance, Character);
+		Proxy->DoPickup();
+		return true;
 	}
-	if (!Best) return false;
-	Proxy->SetPickupData(Best, BestInstance, Character);
-	Proxy->DoPickup();
-	return true;
+	return false;
 }
 
 void UMKICollectNearbySubsystem::EmptyCrates(AFGCharacterPlayer* Character, float RadiusCm)

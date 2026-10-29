@@ -53,8 +53,21 @@ struct MKIROADS_API FMKIRoadAutoPaths
 	static int32 CleanStaleNodeLinks(UWorld* World);
 	/** Local points and headings in Junction's frame as path points on its deck top. */
 	static void LocalToWorld(const AMKIRoadJunction& Junction, const TArray<TArray<TPair<FVector2D, FVector2D>>>& Local, TArray<TArray<FSplinePointData>>& OutPaths);
+	/** Whether a path that is not being removed runs from within JoinRadiusCm of Start to within JoinRadiusCm of End. */
+	static bool HasPathBetween(UWorld* World, const FVector& Start, const FVector& End);
 	/** Whether a docking station that is not being removed stands at Location (#241). */
 	static bool HasStandingStation(UWorld* World, const FVector& Location);
+	/** How far past a road piece's bounds its floor can change another path's validation (a vehicle overhangs a path end). */
+	static constexpr float RevalidateMarginCm = 1000.f;
+	/**
+	 * Has the game validate again every vehicle path within RevalidateMarginCm of Bounds (#396). A path's validation is
+	 * kept from when it was laid: live, a piece's paths ending where a later piece was built stayed no_floor (the vehicle
+	 * overhanging the end had no deck under it then), while the same path laid by hand there was valid. Run once a road
+	 * piece's floor stands and when it goes. Paths out of the players' range are marked and validate when one comes near.
+	 */
+	static void RevalidateAround(UWorld* World, const FBox& Bounds);
+	/** RevalidateAround next tick, once a dismantled piece's floor is gone (so paths that ended on it show honestly). */
+	static void RevalidateAfterRemoval(UWorld* World, const FBox& Bounds);
 	/** Spawns a vanilla Universal path segment along each of Paths, joining ends to existing nodes; the segments built. */
 	static void Spawn(UWorld* World, const TArray<TArray<FSplinePointData>>& Paths, TArray<AFGVehiclePathSegment*>& OutSegments);
 };

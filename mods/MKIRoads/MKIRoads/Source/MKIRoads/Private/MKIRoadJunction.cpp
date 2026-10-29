@@ -11,6 +11,7 @@
 #include "FGCustomizationRecipe.h"
 #include "FGDismantleInterface.h"
 #include "FGFactoryLegsComponent.h"
+#include "MKIRoadBuildSnap.h"
 #include "Buildables/FGBuildableDockingStation.h"
 #include "EngineUtils.h"
 #include "WheeledVehicles/FGVehiclePathNode.h"
@@ -217,6 +218,36 @@ namespace
 		Out.Arms.Add({ FVector2D(-Reach, 0.0), FVector2D(-1.0, 0.0) });
 		Out.bTruckDepot = true;
 	}
+	/**
+	 * A lane transition's deck: whole 8 m tiles, the 4-lane width from its 4-lane end (-X) to the taper's end, then the 2-lane
+	 * neck to its 2-lane end (+X), both on the same center line; an arm at each end with its own lanes.
+	 */
+	void LaneTransitionCells(FMKIRoadJunctionLayout& Out)
+	{
+		const float Tile = AMKIRoadSplineRoad::LaneWidthCm, Reach = AMKIRoadJunction::TransitionHalfLengthCm(), TaperEnd = AMKIRoadJunction::TransitionTaperEndCm();
+		for (float X0 = -Reach; X0 < Reach - 1.f; X0 += Tile)
+		{
+			const int32 Lanes = X0 < TaperEnd - 1.f ? AMKIRoadJunction::TransitionWideLanes : AMKIRoadJunction::TransitionNarrowLanes;
+			for (int32 Row = 0; Row < Lanes; ++Row)
+			{
+				const float Y0 = -Lanes * Tile * 0.5f + Row * Tile;
+				Out.Cells.Add({ FVector2D(X0, Y0), FVector2D(X0 + Tile, Y0), FVector2D(X0 + Tile, Y0 + Tile), FVector2D(X0, Y0 + Tile) });
+				Out.TileOrigins.Add(FVector2D(X0, Y0));
+			}
+		}
+		Out.Arms.Add({ FVector2D(-Reach, 0.0), FVector2D(-1.0, 0.0), AMKIRoadJunction::TransitionWideLanes });
+		Out.Arms.Add({ FVector2D(Reach, 0.0), FVector2D(1.0, 0.0), AMKIRoadJunction::TransitionNarrowLanes });
+		Out.bLaneTransition = true;
+	}
+
+	/** Path points mirrored across the center line and run backwards: the other direction's lane of a symmetric piece. */
+	TArray<TPair<FVector2D, FVector2D>> MirrorReversed(const TArray<TPair<FVector2D, FVector2D>>& Path)
+	{
+		TArray<TPair<FVector2D, FVector2D>> Out;
+		for (int32 Index = Path.Num() - 1; Index >= 0; --Index) Out.Add({ FVector2D(Path[Index].Key.X, -Path[Index].Key.Y), FVector2D(-Path[Index].Value.X, Path[Index].Value.Y) });
+		return Out;
+	}
+
 	/** The legend glyph for Letter (MKIRoadLegendGlyphs.generated.h), or null. */
 	const FMKIRoadLegendGlyph* LegendGlyph(TCHAR Letter)
 	{
@@ -282,7 +313,7 @@ AMKIRoadJunction::AMKIRoadJunction(const FObjectInitializer& ObjectInitializer) 
 FMKIRoadJunctionLayout AMKIRoadJunction::Layout(int32 Arms, int32 Lanes)
 {
 	FMKIRoadJunctionLayout Out;
-	const int32 Count = IsSupportedLaneCount(Lanes) ? Lanes : AMKIRoadSplineRoad::DefaultLanes;
+	const int32 Count = IsLaneTransitionShape(Arms) ? TransitionWideLanes : (IsSupportedLaneCount(Lanes) ? Lanes : AMKIRoadSplineRoad::DefaultLanes);
 	const float Tile = AMKIRoadSplineRoad::LaneWidthCm, Half = Count * Tile * 0.5f, Reach = Half + ApronCm;
 	auto Square = [&Out, Tile](float X0, float Y0)
 	{
@@ -291,6 +322,7 @@ FMKIRoadJunctionLayout AMKIRoadJunction::Layout(int32 Arms, int32 Lanes)
 	};
 	if (IsTurnaroundShape(Arms)) TurnaroundCells(Out, Count);
 	else if (IsDepotShape(Arms)) TruckDepotCells(Out, Count, Arms);
+	else if (IsLaneTransitionShape(Arms)) LaneTransitionCells(Out);
 	else
 	{
 		// The square where the roads cross: Lanes x Lanes tiles.
@@ -455,6 +487,46 @@ void AMKIRoadJunction::DepotPaths(int32 Arms, int32 Lanes, TArray<TArray<TPair<F
 	}
 }
 
+void AMKIRoadJunction::LaneTransitionPaths(TArray<TArray<TPair<FVector2D, FVector2D>>>& OutPaths)
+{
+	// Laid for the +X direction (right of the center line, keep right), from the 4-lane end to the 2-lane end, and mirrored for
+	// the -X direction. Each its own path, meeting where the taper ends: the inner lane up to it, the outer lane's bend of two
+	// arcs (as a depot's bay bend) across one lane onto it, and the one lane on through the neck. Toward -X the same node splits
+	// the one lane into the inner lane and the outer lane's bend back out.
+	const double Width = AMKIRoadSplineRoad::LaneWidthCm, Reach = TransitionHalfLengthCm(), TaperEnd = TransitionTaperEndCm();
+	const double Inner = Width * 0.5, Outer = Width * 1.5, Run = TaperEnd + Reach;
+	double R = 0.0, Theta = 0.0;
+	BayBendArcs(Run, Outer - Inner, R, Theta);
+	const double S = FMath::Sin(Theta), C = FMath::Cos(Theta);
+	TArray<TPair<FVector2D, FVector2D>> Through, Merge, Neck;
+	AddLine(Through, FVector2D(-Reach, Inner), FVector2D(TaperEnd, Inner));
+	// Right (toward the center line) about a center below the outer lane, then left about one above the inner lane.
+	AddArc(Merge, FVector2D(-Reach, Outer - R), FVector2D(0.0, R), -Theta);
+	AddArc(Merge, FVector2D(TaperEnd, Inner + R), FVector2D(-R * S, -R * C), Theta);
+	AddLine(Neck, FVector2D(TaperEnd, Inner), FVector2D(Reach, Inner));
+	for (TArray<TPair<FVector2D, FVector2D>>* Path : { &Through, &Merge, &Neck }) OutPaths.Add(*Path);
+	for (TArray<TPair<FVector2D, FVector2D>>* Path : { &Neck, &Through, &Merge }) OutPaths.Add(MirrorReversed(*Path));
+}
+
+void AMKIRoadJunction::DepotLaneSwitchPaths(int32 Lanes, TArray<TArray<TPair<FVector2D, FVector2D>>>& OutPaths)
+{
+	if (Lanes != 4) return;
+	// Laid for the +X lanes (right of the center line) and mirrored for the -X ones: the whole length, one lane across.
+	const double Width = AMKIRoadSplineRoad::LaneWidthCm, Reach = DepotHalfLengthCm, Inner = Width * 0.5, Outer = Width * 1.5;
+	double R = 0.0, Theta = 0.0;
+	BayBendArcs(2.0 * Reach, Outer - Inner, R, Theta);
+	const double S = FMath::Sin(Theta), C = FMath::Cos(Theta);
+	TArray<TPair<FVector2D, FVector2D>> Out, In;
+	// Out: left (away from the center line) about a center above the inner lane, then right about one below the outer lane.
+	AddArc(Out, FVector2D(-Reach, Inner + R), FVector2D(0.0, -R), Theta);
+	AddArc(Out, FVector2D(Reach, Outer - R), FVector2D(-R * S, R * C), -Theta);
+	// In: right about a center below the outer lane, then left about one above the inner lane (as a lane transition's merge).
+	AddArc(In, FVector2D(-Reach, Outer - R), FVector2D(0.0, R), -Theta);
+	AddArc(In, FVector2D(Reach, Inner + R), FVector2D(-R * S, -R * C), Theta);
+	for (TArray<TPair<FVector2D, FVector2D>>* Path : { &Out, &In }) OutPaths.Add(*Path);
+	for (TArray<TPair<FVector2D, FVector2D>>* Path : { &Out, &In }) OutPaths.Add(MirrorReversed(*Path));
+}
+
 void AMKIRoadJunction::StraightLanePaths(int32 Lanes, float HalfLengthCm, TArray<TArray<TPair<FVector2D, FVector2D>>>& OutPaths)
 {
 	const int32 Count = IsSupportedLaneCount(Lanes) ? Lanes : AMKIRoadSplineRoad::DefaultLanes;
@@ -585,12 +657,15 @@ void AMKIRoadJunction::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 
 void AMKIRoadJunction::SetLanes(int32 Lanes)
 {
-	if (IsSupportedLaneCount(Lanes)) mLanes = Lanes;
+	// A lane transition's ends have their own widths.
+	if (IsLaneTransitionShape(mArms)) mLanes = TransitionWideLanes;
+	else if (IsSupportedLaneCount(Lanes)) mLanes = Lanes;
 }
 
 void AMKIRoadJunction::BeginPlay()
 {
 	if (!IsSupportedLaneCount(mLanes)) mLanes = AMKIRoadSplineRoad::DefaultLanes;
+	if (IsLaneTransitionShape(mArms)) mLanes = TransitionWideLanes;
 	if (mBayPathsLaid) { mDocksJoined |= 1; mBayPathsLaid = false; }
 	const FVector2D Size = LayoutBounds(Layout(mArms, mLanes)).GetSize();
 	mWidth = mDepth = static_cast<float>(FMath::Max(Size.X, Size.Y));
@@ -606,6 +681,23 @@ void AMKIRoadJunction::BeginPlay()
 	{
 		// Its squares carry the collision and the snapping: next tick, once a loaded save has resolved the saved ones.
 		if (HasAuthority()) World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]() { SyncTiles(); }));
+		// The paths around it validated again once its squares and its own paths stand (#396), once.
+		if (HasAuthority() && !mNearbyPathsRevalidated)
+		{
+			FTimerHandle Revalidate;
+			World->GetTimerManager().SetTimer(Revalidate, FTimerDelegate::CreateWeakLambda(this, [this]()
+			{
+				if (IsActorBeingDestroyed() || mAutoPathsVersion < FMKIRoadAutoPaths::Version || mTiles.Num() == 0) return;
+				FMKIRoadAutoPaths::RevalidateAround(GetWorld(), GetComponentsBoundingBox(true));
+				mNearbyPathsRevalidated = true;
+			}), 1.f, false);
+		}
+		// A depot laid before lane switches lays them once its lanes' nodes stand (its paths are current, so none are relaid).
+		if (HasAuthority() && IsTruckDepot() && !mLaneSwitchesLaid && mAutoPathsVersion >= FMKIRoadAutoPaths::Version)
+		{
+			FTimerHandle Switches;
+			World->GetTimerManager().SetTimer(Switches, FTimerDelegate::CreateWeakLambda(this, [this]() { LayLaneSwitches(); }), 1.f, false);
+		}
 		// Its vehicle paths (#235), once, after the roads loaded with it have begun play.
 		if (HasAuthority() && mAutoPathsVersion < FMKIRoadAutoPaths::Version)
 		{
@@ -646,6 +738,8 @@ void AMKIRoadJunction::LayAutoPaths()
 	for (AFGVehiclePathSegment* Segment : Segments) mAutoPaths.Add(Segment);
 	mAutoPathsLaid = true;
 	mAutoPathsVersion = FMKIRoadAutoPaths::Version;
+	// Its lane switches came with its paths (FMKIRoadAutoPaths::JunctionPaths).
+	mLaneSwitchesLaid = true;
 	LayBayPaths();
 }
 
@@ -672,6 +766,22 @@ int32 AMKIRoadJunction::FindDepotDock(const FVector& Location, float MaxDistance
 		if (Distance <= BestDistance) { Best = Index; BestDistance = Distance; }
 	}
 	return Best;
+}
+
+void AMKIRoadJunction::LayLaneSwitches()
+{
+	if (mLaneSwitchesLaid || !IsTruckDepot() || !HasAuthority() || IsActorBeingDestroyed() || mAutoPathsVersion < FMKIRoadAutoPaths::Version) return;
+	TArray<TArray<TPair<FVector2D, FVector2D>>> Local;
+	DepotLaneSwitchPaths(mLanes, Local);
+	TArray<TArray<FSplinePointData>> Paths, Missing;
+	FMKIRoadAutoPaths::LocalToWorld(*this, Local, Paths);
+	// The maintainer laid these by hand on his depots first: one already there between the same ends is kept, not doubled.
+	for (TArray<FSplinePointData>& Path : Paths) if (!FMKIRoadAutoPaths::HasPathBetween(GetWorld(), Path[0].Location, Path.Last().Location)) Missing.Add(MoveTemp(Path));
+	TArray<AFGVehiclePathSegment*> Segments;
+	FMKIRoadAutoPaths::Spawn(GetWorld(), Missing, Segments);
+	for (AFGVehiclePathSegment* Segment : Segments) mAutoPaths.Add(Segment);
+	mLaneSwitchesLaid = true;
+	UE_LOG(LogMKIRoads, Log, TEXT("Truck depot %s: %d lane switches laid (%d already there)"), *GetName(), Segments.Num(), Local.Num() - Missing.Num());
 }
 
 void AMKIRoadJunction::LayBayPaths()
@@ -776,6 +886,7 @@ void AMKIRoadJunction::Dismantle_Implementation()
 		// Its squares, if it goes on its own (the bridge, or a dismantle that did not gather them).
 		for (AMKIRoadTile* Tile : mTiles) if (IsValid(Tile) && !Tile->IsActorBeingDestroyed()) Tile->Destroy();
 		mTiles.Reset();
+		FMKIRoadAutoPaths::RevalidateAfterRemoval(GetWorld(), GetComponentsBoundingBox(true));
 	}
 	Super::Dismantle_Implementation();
 }
@@ -1245,11 +1356,53 @@ int32 AMKIRoadJunction::MarkingGeometry(int32 Arms, int32 Lanes, const UMKIRoadM
 			++Count;
 		}
 	}
+	if (Shape.bLaneTransition)
+	{
+		// A lane transition: the double yellow center line its whole length; on each side the taper line, the joined 4-lane
+		// road's edge trim carried in to the 2-lane neck's, white hatching between it and the deck's edge (not drivable), and
+		// the dotted lane-drop line between the through lane and the ending one, from the 4-lane end.
+		const float Reach = TransitionHalfLengthCm(), TaperEnd = TransitionTaperEndCm(), Width = Pattern->LineWidthCm, Tile = AMKIRoadSplineRoad::LaneWidthCm;
+		const float WideHalf = TransitionWideLanes * Tile * 0.5f, NarrowHalf = TransitionNarrowLanes * Tile * 0.5f;
+		const float PairOffset = (Pattern->CenterGapCm + Width) * 0.5f;
+		for (const float Side : { -1.f, 1.f }) { AddQuad(Paint[0], FVector2D(0.0, Side * PairOffset), FVector2D(1.0, 0.0), 2.f * Reach, Width); ++Count; }
+		for (const float Side : { -1.f, 1.f })
+		{
+			const FVector2D From(-Reach, Side * (WideHalf - Trim * 0.5f)), To(TaperEnd, Side * (NarrowHalf - Trim * 0.5f));
+			const FVector2D Along = (To - From).GetSafeNormal();
+			// A little longer at each end so it meets the trims it joins without a gap.
+			AddQuad(Paint[1], (From + To) * 0.5, Along, static_cast<float>((To - From).Size()) + Trim, Trim);
+			++Count;
+			// The hatched area: the wide part's outer lane beyond the taper line's outer side.
+			const FVector2D Normal(-Along.Y, Along.X);
+			const FVector2D Out = Normal.Y * Side > 0.0 ? Normal : -Normal;
+			const double Y0 = Side > 0.f ? NarrowHalf : -WideHalf, Y1 = Side > 0.f ? WideHalf : -NarrowHalf;
+			const TArray<FVector2D> Lane = { FVector2D(-Reach, Y0), FVector2D(TaperEnd, Y0), FVector2D(TaperEnd, Y1), FVector2D(-Reach, Y1) };
+			const TArray<FVector2D> Gore = ClipHalfPlane(Lane, Out, FVector2D::DotProduct(From, Out) + Trim * 0.5, false);
+			if (Gore.Num() >= 3)
+			{
+				// Bands slanting with the traffic beside them, as North American gore hatching.
+				const FVector2D Slant = FVector2D(1.0, Side > 0.f ? -1.0 : 1.0).GetSafeNormal();
+				double Low = TNumericLimits<double>::Max(), High = TNumericLimits<double>::Lowest();
+				for (const FVector2D& Corner : Gore) { Low = FMath::Min(Low, FVector2D::DotProduct(Corner, Slant)); High = FMath::Max(High, FVector2D::DotProduct(Corner, Slant)); }
+				for (double Band = FMath::FloorToDouble(Low / HatchPeriodCm) * HatchPeriodCm; Band < High; Band += HatchPeriodCm)
+				{
+					if (AddFan(Paint[1], ClipHalfPlane(ClipHalfPlane(Gore, Slant, Band, false), Slant, Band + HatchStripeWidthCm, true))) ++Count;
+				}
+			}
+			// The lane-drop line on the lane boundary.
+			for (float X = -Reach; X < -Reach + TransitionDropLineCm - 1.f; X += DropLineDashCm + DropLineGapCm)
+			{
+				const float Length = FMath::Min(DropLineDashCm, -Reach + TransitionDropLineCm - X);
+				AddQuad(Paint[1], FVector2D(X + Length * 0.5f, Side * NarrowHalf), FVector2D(1.0, 0.0), Length, 2.f * Width);
+				++Count;
+			}
+		}
+	}
 	// Each arm's crosswalk, stop line, and lines (#229).
 	TArray<FMKIRoadJunctionStripe> Stripes;
 	ArmMarkings(Lanes, Pattern->LineWidthCm, Pattern->CenterGapCm, Stripes);
 	const float Half = Lanes * AMKIRoadSplineRoad::LaneWidthCm * 0.5f;
-	for (const FMKIRoadJunctionArm& Arm : (Shape.bTurnaround || Shape.bTruckDepot ? TArray<FMKIRoadJunctionArm>() : Shape.Arms))
+	for (const FMKIRoadJunctionArm& Arm : (Shape.bTurnaround || Shape.bTruckDepot || Shape.bLaneTransition ? TArray<FMKIRoadJunctionArm>() : Shape.Arms))
 	{
 		const FVector2D Out = Arm.Outward, Right(-Out.Y, Out.X);
 		const FVector2D Edge = Out * Half;
@@ -1353,7 +1506,7 @@ void AMKIRoadJunction::PollDockModes()
 				if (!Legs) continue;
 				bool bLegs = false;
 				for (const FFeetOffset& Foot : Legs->GetCachedFeetOffsets()) bLegs |= FMath::Abs(Foot.OffsetZ) > 1.f;
-				if (bLegs) Legs->SetFeetOffsetsToZero();
+				if (bLegs) FMKIRoadBuildSnap::ClearLiveLegs(Legs, *It);
 			}
 		}
 	}
@@ -1393,6 +1546,21 @@ TArray<FTransform> AMKIRoadJunction::GetArmEnds() const
 		Ends.Add(FTransform(Outward.Rotation(), Frame.TransformPosition(FVector(Arm.Center.X, Arm.Center.Y, 0.f))));
 	}
 	return Ends;
+}
+
+int32 AMKIRoadJunction::GetLanesAtArm(const FVector& WorldPoint) const
+{
+	const FVector Local = GetActorTransform().InverseTransformPosition(WorldPoint);
+	int32 Lanes = mLanes;
+	double Nearest = TNumericLimits<double>::Max();
+	for (const FMKIRoadJunctionArm& Arm : Layout(mArms, mLanes).Arms)
+	{
+		const double Distance = FVector2D::Distance(Arm.Center, FVector2D(Local.X, Local.Y));
+		if (Distance >= Nearest) continue;
+		Nearest = Distance;
+		Lanes = Arm.Lanes > 0 ? Arm.Lanes : mLanes;
+	}
+	return Lanes;
 }
 
 bool AMKIRoadJunction::NearSide(const FVector& Aim, FVector& OutPoint, FVector& OutOutward, bool& bOutArm) const

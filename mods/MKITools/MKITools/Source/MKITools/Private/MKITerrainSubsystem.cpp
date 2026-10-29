@@ -3,12 +3,14 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Dom/JsonObject.h"
+#include "Engine/DamageEvents.h"
 #include "Engine/Level.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "FGCharacterPlayer.h"
+#include "FGDestructibleActor.h"
 #include "FGFoliageRemovalSubsystem.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -315,9 +317,46 @@ bool AMKITerrainSubsystem::RemoveRockForPlayer(AActor* Rock, APlayerController* 
 	const double Distance = Bounds.IsValid ? FMath::Sqrt(Bounds.ComputeSquaredDistanceToPoint(Pawn->GetActorLocation())) : FVector::Dist(Rock->GetActorLocation(), Pawn->GetActorLocation());
 	if (Distance > FMKITerrainRules::MaximumReachCm) { OutReason = FString::Printf(TEXT("out_of_reach (%.0f cm)"), Distance); return false; }
 	const APlayerState* State = Player->GetPlayerState<APlayerState>();
+	if (AFGDestructibleActor* Destructible = Cast<AFGDestructibleActor>(Rock))
+	{
+		if (!BreakDestructible(Destructible, Player, OutReason)) return false;
+		UE_LOG(LogMKITools, Log, TEXT("Terrain: %s broke %s"), State ? *State->GetPlayerName() : TEXT("player"), *Rock->GetName());
+		FMKITerrainRules::GrantLimestone(Cast<AFGCharacterPlayer>(Player->GetPawn()), FMKITerrainRules::LimestoneForRock(Bounds), Pawn->GetActorLocation());
+		return true;
+	}
 	if (!RemoveRock(Rock, State ? State->GetPlayerName() : FString(TEXT("player")), OutReason)) return false;
 	// The maintainer (2026-10-20): a removed level rock gives limestone by its size, once (a rock already removed is refused).
 	FMKITerrainRules::GrantLimestone(Cast<AFGCharacterPlayer>(Player->GetPawn()), FMKITerrainRules::LimestoneForRock(Bounds), Pawn->GetActorLocation());
+	return true;
+}
+
+UMKITerrainBlastDamageType::UMKITerrainBlastDamageType(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
+{
+	mShouldDamageDestructible = true;
+	mDamageAmount = 1.0e6f;
+	mDamageRadius = 100.f;
+}
+
+bool AMKITerrainSubsystem::BreakDestructible(AFGDestructibleActor* Rock, APlayerController* Player, FString& OutReason)
+{
+	if (!HasAuthority()) { OutReason = TEXT("server_authority_required"); return false; }
+	OutReason = FMKITerrainRules::DestructibleRefusalReason(Rock);
+	if (!OutReason.IsEmpty()) return false;
+	// The game's own destruction, as a nobelisk's blast at the rock: radial damage of a type that damages destructibles.
+	// The rock fractures, plays its effects, frees what it covered, and saves and replicates its broken state.
+	FRadialDamageEvent Blast;
+	Blast.DamageTypeClass = UMKITerrainBlastDamageType::StaticClass();
+	Blast.Origin = Rock->GetActorLocation();
+	Blast.Params = FRadialDamageParams(1.0e6f, 0.f, 0.f, 100.f, 0.f);
+	Rock->TakeDamage(1.0e6f, Blast, Player, Player->GetPawn());
+	if (Rock->GetDestructibleActorState() == EDestructibleActorState::DSS_Intact)
+	{
+		// The damage did not break it: set the broken state directly (hidden, without collision, saved).
+		UE_LOG(LogMKITools, Warning, TEXT("Terrain: %s took the blast but stayed intact; setting it destroyed"), *Rock->GetName());
+		Rock->mDestroyedByForceLocation = Blast.Origin;
+		Rock->SetDestructibleActorState(EDestructibleActorState::DSS_Destroyed);
+	}
+	if (Rock->GetDestructibleActorState() == EDestructibleActorState::DSS_Intact) { OutReason = TEXT("did_not_break"); return false; }
 	return true;
 }
 

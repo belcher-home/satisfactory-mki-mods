@@ -10,7 +10,7 @@ class UStaticMesh;
 
 /**
  * Collect nearby items (Mods > MKI Tools, the maintainer 2026-10-21): with the option on, the local player picks up, within
- * the collect radius (1x-10x the chainsaw's 5 m):
+ * the collect radius (1x-20x of 5 m, the maintainer 2026-10-25: up to 100 m):
  * - berries, nuts and bacon agaric (foliage whose pickup gives them; not leaves, wood, flowers or mycelia);
  * - items lying on the ground (AFGItemPickup: crash-site materials, power slugs, somersloops, mercer spheres, creature
  *   remains);
@@ -25,7 +25,7 @@ class MKITOOLS_API UMKICollectNearbySubsystem : public UTickableWorldSubsystem
 	GENERATED_BODY()
 
 public:
-	/** The collect radius at 1x: the chainsaw's own clearance radius (cm). */
+	/** The collect radius at 1x (cm). The maintainer (2026-10-25): 5 m, and up to 20x, so it reaches 100 m. */
 	static constexpr float BaseRadiusCm = 500.f;
 	/** Seconds between two pickups, and between two scans for what is near. */
 	static constexpr float PickupIntervalSeconds = 0.1f;
@@ -46,6 +46,12 @@ private:
 	TMap<TObjectPtr<UStaticMesh>, bool> CollectibleMeshes;
 	TArray<TWeakObjectPtr<class AFGItemPickup>> NearItems;
 	TArray<TWeakObjectPtr<class AFGCrate>> NearCrates;
+	/**
+	 * Collectible foliage found by the last scan, farthest first (the nearest is popped). The instance index can move when
+	 * another instance is removed, so each keeps its location and is checked against it before the pickup.
+	 */
+	struct FNearFoliage { TWeakObjectPtr<class UHierarchicalInstancedStaticMeshComponent> Component; int32 Instance = INDEX_NONE; FVector Location = FVector::ZeroVector; };
+	TArray<FNearFoliage> NearFoliage;
 	double NextPickupTime = 0.0;
 	double NextScanTime = 0.0;
 };

@@ -12,9 +12,9 @@ class UStaticMeshComponent;
 struct FHitResult;
 
 /**
- * Which world actors Terrain mode may remove: plain level-placed rocks. Everything the game already removes another way
- * (buildables, nobelisk-destructible rocks, resource deposits, chainsawed foliage), resource node meshes, landscape, and
- * anything spawned at runtime is refused. Rock foliage (boulders the game places as foliage instances, which neither the
+ * Which world actors Terrain mode may remove: plain level-placed rocks, and nobelisk-destructible rocks (broken as a
+ * nobelisk breaks them). Everything else the game removes another way (buildables, resource deposits, chainsawed
+ * foliage), resource node meshes, landscape, and anything spawned at runtime is refused. Rock foliage (boulders the game places as foliage instances, which neither the
  * chainsaw nor a nobelisk removes) is removed through the game's own foliage removal.
  */
 struct MKITOOLS_API FMKITerrainRules
@@ -24,7 +24,7 @@ struct MKITOOLS_API FMKITerrainRules
 	/** The game's rock meshes: arches, boulders, cliffs, desert rocks. */
 	static constexpr const TCHAR* RockMeshFolder = TEXT("/Game/FactoryGame/World/Environment/Rock/");
 
-	/** The rock's mesh component: the root static mesh component of a plain static mesh actor, or null. */
+	/** The rock's mesh component: the root static mesh component of a plain static mesh actor, a destructible rock's intact mesh, or null. */
 	static UStaticMeshComponent* RockMesh(const AActor* Actor);
 
 	/**
@@ -32,6 +32,13 @@ struct MKITOOLS_API FMKITerrainRules
 	 * no_static_mesh, not_static, reserved_mesh, hidden), or empty when it can. A rock already removed reports `hidden`.
 	 */
 	static FString RefusalReason(const AActor* Actor);
+	/**
+	 * Why `Actor` cannot be broken as a nobelisk-destructible rock (AFGDestructibleActor), as a short code (missing,
+	 * not_destructible, not_intact), or empty when it can.
+	 */
+	static FString DestructibleRefusalReason(const AActor* Actor);
+	/** Whether Terrain mode may take `Actor`: a removable level rock or an intact nobelisk-destructible rock. */
+	static bool IsTerrainTarget(const AActor* Actor);
 
 	/** Whether a foliage mesh is one of the game's rocks (never a bush, tree, or anything pickable). */
 	static bool IsRockFoliageMesh(const UStaticMesh* Mesh);

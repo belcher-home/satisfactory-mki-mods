@@ -121,6 +121,18 @@ void AMKIRoadSplineRoad::BeginPlay()
 		World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]() { EnsureCollisionPhysics(); }));
 		FTimerHandle Settled;
 		World->GetTimerManager().SetTimer(Settled, FTimerDelegate::CreateWeakLambda(this, [this]() { EnsureCollisionPhysics(); }), 1.f, false);
+		// The paths around it validated again once its deck collision and its own paths stand (#396), once.
+		if (HasAuthority() && !mNearbyPathsRevalidated)
+		{
+			FTimerHandle Revalidate;
+			World->GetTimerManager().SetTimer(Revalidate, FTimerDelegate::CreateWeakLambda(this, [this]()
+			{
+				if (IsActorBeingDestroyed() || mAutoPathsVersion < FMKIRoadAutoPaths::Version) return;
+				EnsureCollisionPhysics();
+				FMKIRoadAutoPaths::RevalidateAround(GetWorld(), GetComponentsBoundingBox(true));
+				mNearbyPathsRevalidated = true;
+			}), 1.5f, false);
+		}
 		// Its vehicle paths (#235), once, after the roads and intersections loaded with it have begun play.
 		if (HasAuthority() && mAutoPathsVersion < FMKIRoadAutoPaths::Version)
 		{
@@ -590,6 +602,7 @@ void AMKIRoadSplineRoad::Dismantle_Implementation()
 	{
 		for (AFGVehiclePathSegment* Path : mAutoPaths) if (IsValid(Path) && !Path->IsActorBeingDestroyed()) IFGDismantleInterface::Execute_Dismantle(Path);
 		mAutoPaths.Reset();
+		FMKIRoadAutoPaths::RevalidateAfterRemoval(GetWorld(), GetComponentsBoundingBox(true));
 	}
 	Super::Dismantle_Implementation();
 }

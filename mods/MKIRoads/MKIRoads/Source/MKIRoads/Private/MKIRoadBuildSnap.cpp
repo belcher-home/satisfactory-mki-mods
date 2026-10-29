@@ -7,6 +7,7 @@
 #include "Buildables/FGBuildable.h"
 #include "Buildables/FGBuildableDockingStation.h"
 #include "FGFactoryLegsComponent.h"
+#include "MKIRoadsGameWorldModule.h"
 #include "Hologram/FGBuildableHologram.h"
 #include "Buildables/FGBuildableFoundation.h"
 #include "Buildables/FGBuildableWall.h"
@@ -163,8 +164,28 @@ namespace
 	{
 		static FObjectProperty* LegsProperty = FindFProperty<FObjectProperty>(AFGBuildableHologram::StaticClass(), TEXT("mLegs"));
 		if (!LegsProperty || !Hologram || !Hologram->IsA<AFGBuildableHologram>()) return;
-		if (UFGFactoryLegsComponent* Legs = Cast<UFGFactoryLegsComponent>(LegsProperty->GetObjectPropertyValue_InContainer(Hologram))) Legs->SetFeetOffsetsToZero();
+		FMKIRoadBuildSnap::ClearLiveLegs(Cast<UFGFactoryLegsComponent>(LegsProperty->GetObjectPropertyValue_InContainer(Hologram)), Hologram);
 	}
+}
+
+bool FMKIRoadBuildSnap::ClearLiveLegs(UFGFactoryLegsComponent* Legs, const AActor* Owner)
+{
+	if (!Legs || !Owner) return false;
+	const bool bShared = Legs->IsTemplate() || Legs->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject) || Owner->IsTemplate() || Owner->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject);
+	if (bShared || Legs->GetOwner() != Owner)
+	{
+		// Once per owner class and reason: this is the evidence a live run needs (#403).
+		static TSet<FString> Logged;
+		const FString Key = FString::Printf(TEXT("%s|%d"), *Owner->GetClass()->GetName(), bShared ? 1 : 0);
+		if (!Logged.Contains(Key))
+		{
+			Logged.Add(Key);
+			UE_LOG(LogMKIRoads, Warning, TEXT("Legs of %s left alone: %s (component %s, its owner %s)"), *Owner->GetName(), bShared ? TEXT("a template or default object") : TEXT("not its own component"), *Legs->GetPathName(), *GetNameSafe(Legs->GetOwner()));
+		}
+		return false;
+	}
+	Legs->SetFeetOffsetsToZero();
+	return true;
 }
 
 bool FMKIRoadBuildSnap::SnapDockingStationHologram(AFGHologram* Hologram, const FHitResult& HitResult)
@@ -250,6 +271,7 @@ bool FMKIRoadBuildSnap::SnapHologram(AFGHologram* Hologram, const FHitResult& Hi
 namespace
 {
 	const TCHAR* StreetLightClassPath = TEXT("/Game/FactoryGame/Buildable/Factory/StreetLight/Build_StreetLight.Build_StreetLight_C");
+	const TCHAR* DoubleStreetLightClassPath = TEXT("/MKIRoads/StreetLights/Build_MKIR_StreetLightDouble.Build_MKIR_StreetLightDouble_C");
 }
 
 bool FMKIRoadBuildSnap::IsStreetLight(const UClass* BuildClass)
@@ -257,13 +279,18 @@ bool FMKIRoadBuildSnap::IsStreetLight(const UClass* BuildClass)
 	return BuildClass && BuildClass->GetPathName() == StreetLightClassPath;
 }
 
-bool FMKIRoadBuildSnap::SnapStreetLight(const AMKIRoadSplineRoad& Road, const FVector& Hit, float ExtraYawDeg, FTransform& Out)
+bool FMKIRoadBuildSnap::IsDoubleStreetLight(const UClass* BuildClass)
+{
+	return BuildClass && BuildClass->GetPathName() == DoubleStreetLightClassPath;
+}
+
+bool FMKIRoadBuildSnap::SnapStreetLight(const AMKIRoadSplineRoad& Road, const FVector& Hit, float ExtraYawDeg, FTransform& Out, bool bCenterline)
 {
 	const USplineComponent* Spline = Road.GetSplineComponent();
 	if (!Spline || Spline->GetNumberOfSplinePoints() < 2) return false;
 	const float Length = Spline->GetSplineLength();
 	if (Length < 1.f) return false;
-	const EMKIRoadSide Side = RoadSideAt(Road, Hit);
+	const EMKIRoadSide Side = bCenterline ? EMKIRoadSide::Center : RoadSideAt(Road, Hit);
 	const float Half = Road.GetDeckWidthCm() * 0.5f;
 	const float Offset = Side == EMKIRoadSide::Center ? 0.f : (Side == EMKIRoadSide::Left ? -(Half - LightEdgeInsetCm) : Half - LightEdgeInsetCm);
 	const float Toward = Side == EMKIRoadSide::Right ? -1.f : 1.f;
@@ -282,9 +309,11 @@ bool FMKIRoadBuildSnap::SnapStreetLightHologram(AFGHologram* Hologram, const FHi
 	AActor* HitActor = HitResult.HitObjectHandle.FetchActor();
 	if (!HitActor) HitActor = HitResult.GetActor();
 	const AMKIRoadSplineRoad* Road = Cast<AMKIRoadSplineRoad>(HitActor);
-	if (!Road || !IsStreetLight(Hologram->GetBuildClass())) return false;
+	const UClass* BuildClass = Hologram->GetBuildClass();
+	const bool bDouble = IsDoubleStreetLight(BuildClass);
+	if (!Road || !(bDouble || IsStreetLight(BuildClass))) return false;
 	FTransform Snapped;
-	if (!SnapStreetLight(*Road, HitResult.Location, static_cast<float>(Hologram->GetScrollRotateValue()), Snapped)) return false;
+	if (!SnapStreetLight(*Road, HitResult.Location, static_cast<float>(Hologram->GetScrollRotateValue()), Snapped, bDouble)) return false;
 	Hologram->SetActorTransform(Snapped);
 	return true;
 }

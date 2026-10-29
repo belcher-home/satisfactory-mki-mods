@@ -21,6 +21,10 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_RemoveRockFoliage(class UHierarchicalInstancedStaticMeshComponent* Foliage, FVector Location);
 
+	/** The player's "Fill Depot from inventory" choice (MKI Tools options, kept per player): the server fills that player's depot upload queue (AMKIPlayerSubsystem). */
+	UFUNCTION(Server, Reliable)
+	void Server_SetFillDepotFromInventory(bool bFill);
+
 	/** The game requires a replicated property on every remote call object. */
 	UPROPERTY(Replicated)
 	bool mForceNetField_UMKIToolsRemoteCallObject = false;

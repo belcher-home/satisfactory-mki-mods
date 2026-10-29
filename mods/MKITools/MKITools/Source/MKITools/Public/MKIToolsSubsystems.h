@@ -6,7 +6,10 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "MKIToolsSubsystems.generated.h"
 
-/** Registers MKI Tools' remote call object with SML (which adds it to every game mode, so a client's click reaches the server) and its options (UMKIToolsConfiguration). */
+/**
+ * Registers MKI Tools' remote call object with SML (which adds it to every game mode, so a client's click reaches the server)
+ * and its options (UMKIToolsConfiguration), and shows them under Options > MKI Tools (UMKIToolsOptionsMenu).
+ */
 UCLASS()
 class MKITOOLS_API UMKIToolsGameInstanceSubsystem : public UGameInstanceSubsystem
 {
@@ -14,6 +17,11 @@ class MKITOOLS_API UMKIToolsGameInstanceSubsystem : public UGameInstanceSubsyste
 
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+	virtual void Deinitialize() override;
+
+private:
+	UPROPERTY(Transient)
+	TObjectPtr<class UMKIToolsOptionsMenu> OptionsMenu;
 };
 
 /**

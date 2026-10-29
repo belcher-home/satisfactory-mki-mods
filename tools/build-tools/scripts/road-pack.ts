@@ -3,14 +3,17 @@
  *
  *   npm run road-pack -- sync     [--plugins MKIRoads,MKIBridge,MKITools]
  *   npm run road-pack -- icons    [--update-golden]  # render the build-menu icons and compare them with the golden
+ *   npm run road-pack -- meshes   # build the street light meshes from the vanilla ones in Blender (#400)
  *   npm run road-pack -- editor   # compile the synced native modules for the SDK editor (FactoryEditor Development)
- *   npm run road-pack -- import   # icons + editor, build MKI Roads content in the SDK editor, then verify it in a fresh editor
+ *   npm run road-pack -- import   # meshes + icons + editor, build MKI Roads content in the SDK editor, then verify it in a fresh editor
  *   npm run road-pack -- verify
  *   npm run road-pack -- package  [--plugins MKIRoads,MKIBridge,MKITools]
- *   npm run road-pack -- all      # sync, icons, editor, import + verify, package both plugins
+ *   npm run road-pack -- all      # sync, meshes, icons, editor, import + verify, package both plugins
  *
  * Environment: SML_ROOT (default D:/SatisfactoryModding/SatisfactoryModLoader), UE_ROOT (default
- * D:/DevTools/UnrealEngine-CSS). The SML checkout is changed only by `sync` (mirrors the repository plugin
+ * D:/DevTools/UnrealEngine-CSS), BLENDER (default: the newest C:/Program Files/Blender Foundation/Blender <version>/blender.exe).
+ * `meshes` reads the vanilla meshes it edits from .local/road-pack/vanilla/<Name>.glb, exported read-only from the game paks
+ * (the CUE4Parse meshexport tool under .local/tools); they and the meshes built from them stay under .local, never committed. The SML checkout is changed only by `sync` (mirrors the repository plugin
  * sources into <SML>/Mods, backing up anything it overwrites) and by `import` (writes the generated MKI Roads
  * content into <SML>/Mods/MKIRoads/Content). Both paths are ignored by the SML repository. Nothing here
  * touches a game installation or a save. Artifacts, reports, and backups go to .local/. `package` refuses unless the
@@ -24,7 +27,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { loadRoadKit, roadPackAssetPackages, roadPackEditorPlan } from "../src/road-kit.js";
+import { loadRoadKit, roadPackAssetPackages, roadPackEditorPlan, roadStreetLightEntries, streetLightMeshProblems, type StreetLightMeshMeta } from "../src/road-kit.js";
 import { encodePng, ICON_RENDER_ATTEMPTS, isRenderCrash, loadRoadKitIcons, renderRoadKitIcons, roadKitIconsDocument } from "../src/road-pack-icons.js";
 import {
   cookedRegistryProblems, dependencyContractProblems, descriptorModules, installPathFromListing, packagedArtifactProblems, readPluginDescriptor, shippingBuildOutputs, PLUGIN_INSTALL_PATHS, type InstallablePlugin,
@@ -159,6 +162,40 @@ function iconsIsolated(): string {
   throw new Error(`The icons step did not pass in ${ICON_RENDER_ATTEMPTS} attempts`);
 }
 
+const MESHES = join(WORK, "meshes"), VANILLA = join(WORK, "vanilla");
+
+function blender(): string {
+  if (process.env.BLENDER) return process.env.BLENDER;
+  const root = "C:/Program Files/Blender Foundation";
+  const versions = existsSync(root) ? readdirSync(root).filter((name) => /^Blender \d+\.\d+$/.test(name) && existsSync(join(root, name, "blender.exe"))) : [];
+  versions.sort((a, b) => { const [x, y] = [a, b].map((name) => name.slice(8).split(".").map(Number)); return x![0]! - y![0]! || x![1]! - y![1]!; });
+  if (versions.length === 0) throw new Error(`No Blender found under ${root}; set BLENDER to blender.exe`);
+  return join(root, versions[versions.length - 1]!, "blender.exe");
+}
+
+/**
+ * Build each street light mesh (#400) from its vanilla mesh with mods/MKIRoads/blender/street_light_double.py, into
+ * .local/road-pack/meshes, and require the power connection and lamp positions it reports to equal the manifest's.
+ */
+function meshes() {
+  mkdirSync(MESHES, { recursive: true });
+  const results = roadStreetLightEntries(loadRoadKit()).map((entry) => {
+    const vanilla = join(VANILLA, `${entry.vanillaMesh.slice(entry.vanillaMesh.lastIndexOf(".") + 1)}.glb`);
+    if (!existsSync(vanilla)) throw new Error(`Missing ${vanilla}: export ${entry.vanillaMesh.split(".")[0]} from the game paks with .local/tools/meshexport (glTF, LOD0) and copy its .glb there`);
+    const fbx = join(MESHES, entry.meshFile), meta = fbx.replace(/\.fbx$/, ".meta.json"), log = fbx.replace(/\.fbx$/, ".log");
+    rmSync(fbx, { force: true }); rmSync(meta, { force: true });
+    const script = join(roadPackPluginDirectory, "..", "blender", "street_light_double.py");
+    const result = spawnSync(blender(), ["-b", "--factory-startup", "--python", script, "--", vanilla, fbx, meta, String(entry.armTrimCm)], { encoding: "utf8", maxBuffer: 1 << 28 });
+    writeFileSync(log, `${result.stdout ?? ""}${result.stderr ?? ""}`);
+    if (result.status !== 0 || !existsSync(fbx) || !existsSync(meta)) throw new Error(`Blender failed on ${entry.displayName} (exit ${result.status}); see ${log}`);
+    const built = JSON.parse(readFileSync(meta, "utf8")) as StreetLightMeshMeta;
+    const problems = streetLightMeshProblems(entry, built);
+    if (problems.length > 0) throw new Error(problems.join("\n"));
+    return { entry: entry.displayName, vanilla, vanillaSha256: sha256(vanilla), fbx, fbxSha256: sha256(fbx), triangles: built.triangles, collisionHulls: built.collisionHulls };
+  });
+  console.log(JSON.stringify({ command: "meshes", directory: MESHES, meshes: results }, null, 2));
+}
+
 /** Compile the synced native plugin modules (MKI Roads and the bridge) for the SDK editor, which import/verify load. */
 function buildEditor() {
   requireSdk();
@@ -191,7 +228,7 @@ function runEditor(mode: "import" | "verify"): Record<string, unknown> {
   // builds and verifies exactly what the TypeScript contract and its tests describe.
   const plan = join(WORK, "editor-plan.json");
   writeFileSync(plan, JSON.stringify(roadPackEditorPlan(loadRoadKit()), null, 2) + "\n");
-  writeFileSync(config, JSON.stringify({ mode, manifest: roadKitModulesPath, plan, iconDir: mode === "import" ? iconsIsolated() : join(WORK, "icons"), report }, null, 2));
+  writeFileSync(config, JSON.stringify({ mode, manifest: roadKitModulesPath, plan, iconDir: mode === "import" ? iconsIsolated() : join(WORK, "icons"), meshDir: MESHES, report }, null, 2));
   const result = spawnSync(join(UE, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe"), [
     PROJECT, "-run=pythonscript", `-script=${join(roadPackUnrealScriptsDirectory, "road_pack_editor.py")}`, "-unattended", "-nop4", "-nosplash", "-NullRHI", "-stdout", "-FullStdOutLogOutput",
   ], { cwd: SML, env: { ...process.env, MKIR_EDITOR_CONFIG: config }, encoding: "utf8", maxBuffer: 1 << 30 });
@@ -327,12 +364,13 @@ loadRoadKit();
 try {
   if (command === "sync") sync();
   else if (command === "icons") icons();
+  else if (command === "meshes") meshes();
   else if (command === "editor") buildEditor();
-  else if (command === "import") { buildEditor(); runEditor("import"); runEditor("verify"); }
+  else if (command === "import") { meshes(); buildEditor(); runEditor("import"); runEditor("verify"); }
   else if (command === "verify") runEditor("verify");
   else if (command === "package") for (const spec of selectedPlugins()) packagePlugin(spec);
-  else if (command === "all") { sync(); buildEditor(); runEditor("import"); runEditor("verify"); for (const spec of selectedPlugins()) packagePlugin(spec); }
-  else { console.error("Usage: npm run road-pack -- sync|icons|editor|import|verify|package|all [--plugins MKIRoads,MKIBridge,MKITools] [--update-golden]"); process.exitCode = 2; }
+  else if (command === "all") { sync(); meshes(); buildEditor(); runEditor("import"); runEditor("verify"); for (const spec of selectedPlugins()) packagePlugin(spec); }
+  else { console.error("Usage: npm run road-pack -- sync|icons|meshes|editor|import|verify|package|all [--plugins MKIRoads,MKIBridge,MKITools] [--update-golden]"); process.exitCode = 2; }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;

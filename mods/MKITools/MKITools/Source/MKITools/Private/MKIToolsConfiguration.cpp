@@ -86,7 +86,7 @@ UMKIToolsConfiguration::UMKIToolsConfiguration()
 {
 	ConfigId.ModReference = TEXT("MKITools");
 	DisplayName = LOCTEXT("ConfigurationName", "MKI Tools");
-	Description = LOCTEXT("ConfigurationDescription", "Options for MKI Tools.");
+	Description = LOCTEXT("ConfigurationDescription", "MKI Tools' options are under Options > MKI Tools.");
 }
 
 void UMKIToolsConfiguration::BuildOptions()
@@ -99,13 +99,13 @@ void UMKIToolsConfiguration::BuildOptions()
 	// The maintainer (2026-10-20): a hand crafting speed for the Craft Bench, 1x to 10x, default 1x (the game's own).
 	UConfigPropertyInteger* Speed = NewProperty<UConfigPropertyInteger>(Root, IntegerWidgetClass, TEXT("HandCraftingSpeed"));
 	Speed->DisplayName = LOCTEXT("HandCraftingSpeed", "Hand crafting multiplier");
-	Speed->Tooltip = LOCTEXT("HandCraftingSpeedTooltip", "How much crafting work each Craft Bench tick does. The ticks themselves keep the game's pace; each one counts as this many ticks, so it can finish up to this many items. 1 is the game's own, 10 is ten ticks' worth per tick. From 1 to 10.");
+	Speed->Tooltip = LOCTEXT("HandCraftingSpeedTooltip", "How much crafting work each Craft Bench tick does. The ticks themselves keep the game's pace; each one counts as this many ticks, so it can finish up to this many items. 1 is the game's own, 10 is ten ticks' worth per tick. From 1 to 20.");
 	Speed->DefaultValue = 1;
 	Speed->Value = 1;
 	// The maintainer: editable in game (it applies at the next craft step), not only from the main menu.
 	Speed->bRequiresWorldReload = false;
 	Speed->bHidden = false;
-	// SML's float widget clamps to its own range (Blueprint variables, not the native property): 1 to 10, as a slider.
+	// SML's float widget clamps to its own range (Blueprint variables, not the native property): 1 to 20, as a slider.
 	SetBlueprintNumber(Speed, TEXT("MinValue"), MinimumHandCraftingSpeed);
 	SetBlueprintNumber(Speed, TEXT("MaxValue"), MaximumHandCraftingSpeed);
 	SetBlueprintEnum(Speed, TEXT("Slider"));
@@ -113,7 +113,7 @@ void UMKIToolsConfiguration::BuildOptions()
 	// The maintainer (2026-10-21): a hand mining speed for mining resource nodes by hand, 1x to 10x, default 1x.
 	UConfigPropertyInteger* Mining = NewProperty<UConfigPropertyInteger>(Root, IntegerWidgetClass, TEXT("HandMiningSpeed"));
 	Mining->DisplayName = LOCTEXT("HandMiningSpeed", "Hand mining multiplier");
-	Mining->Tooltip = LOCTEXT("HandMiningSpeedTooltip", "How much ore each swing gives when mining a resource node by hand. The swings keep the game's pace; each one gives this many times the ore. 1 is the game's own, 10 is ten times the ore per swing. From 1 to 10.");
+	Mining->Tooltip = LOCTEXT("HandMiningSpeedTooltip", "How much ore each swing gives when mining a resource node by hand. The swings keep the game's pace; each one gives this many times the ore. 1 is the game's own, 10 is ten times the ore per swing. From 1 to 20.");
 	Mining->DefaultValue = 1;
 	Mining->Value = 1;
 	Mining->bRequiresWorldReload = false;
@@ -125,7 +125,7 @@ void UMKIToolsConfiguration::BuildOptions()
 	// The maintainer (2026-10-21): a slider for health regeneration speed, 1x to 10x, default 1x.
 	UConfigPropertyInteger* Regeneration = NewProperty<UConfigPropertyInteger>(Root, IntegerWidgetClass, TEXT("HealthRegenerationSpeed"));
 	Regeneration->DisplayName = LOCTEXT("HealthRegenerationSpeed", "Health regeneration speed");
-	Regeneration->Tooltip = LOCTEXT("HealthRegenerationSpeedTooltip", "How fast your health regenerates on its own, as a multiple of the game's own rate. The wait after taking damage and the level regeneration stops at stay the game's own. 1 is the game's own, 10 is ten times as fast. From 1 to 10.");
+	Regeneration->Tooltip = LOCTEXT("HealthRegenerationSpeedTooltip", "How fast your health regenerates on its own, as a multiple of the game's own rate. The wait after taking damage and the level regeneration stops at stay the game's own. 1 is the game's own, 10 is ten times as fast. From 1 to 20.");
 	Regeneration->DefaultValue = 1;
 	Regeneration->Value = 1;
 	Regeneration->bRequiresWorldReload = false;
@@ -137,7 +137,8 @@ void UMKIToolsConfiguration::BuildOptions()
 	// The maintainer (2026-10-21, toned down 2026-10-22): how much faster the player runs or moves in the air, 0 to 10 steps of 10%.
 	UConfigPropertyInteger* Movement = NewProperty<UConfigPropertyInteger>(Root, IntegerWidgetClass, TEXT("MovementSpeedBonus"));
 	Movement->DisplayName = LOCTEXT("MovementSpeedBonus", "Movement speed bonus");
-	Movement->Tooltip = LOCTEXT("MovementSpeedBonusTooltip", "How much faster you move than the game's own speed, in steps of 10%: walking, sprinting, crouching, swimming and moving in the air. 0 is the game's own, 5 is 50% faster, 10 is twice as fast. Slides, ladders, hypertubes, ziplines and the parachute keep the game's speed. From 0 to 10.");
+	// The maintainer (2026-10-23): every sideways movement, the parachute and the hover pack too, but never up or down.
+	Movement->Tooltip = LOCTEXT("MovementSpeedBonusTooltip", "How much faster you move sideways than the game's own speed, in steps of 10%: walking, sprinting, crouching, swimming, jumping and falling, flying, gliding with the parachute and hovering with the hover pack. Going up or down keeps the game's speed, as do slides, ladders, hypertubes and ziplines. 0 is the game's own, 5 is 50% faster, 10 is twice as fast, 20 is three times as fast. From 0 to 20.");
 	Movement->DefaultValue = 0;
 	Movement->Value = 0;
 	Movement->bRequiresWorldReload = false;
@@ -146,6 +147,15 @@ void UMKIToolsConfiguration::BuildOptions()
 	SetBlueprintNumber(Movement, TEXT("MaxValue"), MaximumMovementSpeedSteps);
 	SetBlueprintEnum(Movement, TEXT("Slider"));
 	Root->SectionProperties.Add(MovementSpeedKey, Movement);
+	// The maintainer (2026-10-23): an on/off switch for flight mode, entered and left with a double jump as the game's own.
+	UConfigPropertyBool* Flight = NewProperty<UConfigPropertyBool>(Root, BoolWidgetClass, TEXT("FlightMode"));
+	Flight->DisplayName = LOCTEXT("FlightMode", "Flight mode");
+	Flight->Tooltip = LOCTEXT("FlightModeTooltip", "When on, double jump to start flying and double jump again to stop, as with the game's own Flight Mode. When off, a double jump does not start flying, whatever the game's own setting says; if you are flying when you turn it off, you drop out of flight.");
+	Flight->DefaultValue = false;
+	Flight->Value = false;
+	Flight->bRequiresWorldReload = false;
+	Flight->bHidden = false;
+	Root->SectionProperties.Add(FlightModeKey, Flight);
 	// The maintainer (2026-10-21): automatically pick up nearby items, with a 1-10 radius (1 = 5 m, as the chainsaw's area).
 	UConfigPropertyBool* Collect = NewProperty<UConfigPropertyBool>(Root, BoolWidgetClass, TEXT("CollectNearby"));
 	Collect->DisplayName = LOCTEXT("CollectNearby", "Collect nearby items");
@@ -157,7 +167,7 @@ void UMKIToolsConfiguration::BuildOptions()
 	Root->SectionProperties.Add(CollectNearbyKey, Collect);
 	UConfigPropertyInteger* CollectRadius = NewProperty<UConfigPropertyInteger>(Root, IntegerWidgetClass, TEXT("CollectRadiusMultiplier"));
 	CollectRadius->DisplayName = LOCTEXT("CollectRadiusMultiplier", "Collect radius");
-	CollectRadius->Tooltip = LOCTEXT("CollectRadiusMultiplierTooltip", "How far away \"Collect nearby items\" reaches, as a multiple of 5 m (the chainsaw's own area): 1 is 5 m, 10 is 50 m. From 1 to 10.");
+	CollectRadius->Tooltip = LOCTEXT("CollectRadiusMultiplierTooltip", "How far away \"Collect nearby items\" reaches, as a multiple of 5 m: 1 is 5 m, 10 is 50 m, 20 is 100 m. From 1 to 20.");
 	CollectRadius->DefaultValue = 1;
 	CollectRadius->Value = 1;
 	CollectRadius->bRequiresWorldReload = false;
@@ -175,6 +185,24 @@ void UMKIToolsConfiguration::BuildOptions()
 	ShortLifts->bRequiresWorldReload = false;
 	ShortLifts->bHidden = false;
 	Root->SectionProperties.Add(ShortConveyorLiftsKey, ShortLifts);
+	// The maintainer (2026-10-27): the player's elevation on the HUD, and the build hologram's elevation and length.
+	UConfigPropertyBool* Readouts = NewProperty<UConfigPropertyBool>(Root, BoolWidgetClass, TEXT("HudReadouts"));
+	Readouts->DisplayName = LOCTEXT("HudReadouts", "Elevation and length readouts");
+	Readouts->Tooltip = LOCTEXT("HudReadoutsTooltip", "Shows the height you stand at under the compass, and while building, under the crosshair, the height of the hologram and the length of belts, pipes, rails, hypertubes, roads and power lines (the height of conveyor lifts). Heights are the world height in metres.");
+	Readouts->DefaultValue = true;
+	Readouts->Value = true;
+	Readouts->bRequiresWorldReload = false;
+	Readouts->bHidden = false;
+	Root->SectionProperties.Add(HudReadoutsKey, Readouts);
+	// The maintainer (2026-10-29): dismantling a belt or pipe takes the supports nothing else rests on, outlined with it.
+	UConfigPropertyBool* UnusedSupports = NewProperty<UConfigPropertyBool>(Root, BoolWidgetClass, TEXT("DismantleUnusedSupports"));
+	UnusedSupports->DisplayName = LOCTEXT("DismantleUnusedSupports", "Dismantle unused supports");
+	UnusedSupports->Tooltip = LOCTEXT("DismantleUnusedSupportsTooltip", "Dismantling a belt, lift, pipe or hypertube also dismantles the conveyor poles, wall and ceiling mounts and pipe supports its ends rest on when no other belt or pipe rests on them, with their refund. They are outlined red with the belt or pipe. Wall and floor holes stay.");
+	UnusedSupports->DefaultValue = true;
+	UnusedSupports->Value = true;
+	UnusedSupports->bRequiresWorldReload = false;
+	UnusedSupports->bHidden = false;
+	Root->SectionProperties.Add(DismantleUnusedSupportsKey, UnusedSupports);
 	// The maintainer (2026-10-21): a button adding 10 inventory slots per press (up to 500), the current size shown, and the
 	// slots can only grow. SML's menu has no button: this native entry draws its own (UMKIInventorySlotsOption).
 	UMKIInventorySlotsOption* Slots = NewObject<UMKIInventorySlotsOption>(Root, TEXT("InventorySlots"), RF_Public | RF_ArchetypeObject);
@@ -195,7 +223,7 @@ void UMKIToolsConfiguration::BuildOptions()
 	// The maintainer (2026-10-20): the chainsaw's clearance (area cut) radius as a multiplier of the game's own (5 m), 1x to 10x.
 	UConfigPropertyInteger* Radius = NewProperty<UConfigPropertyInteger>(Root, IntegerWidgetClass, TEXT("ChainsawClearanceMultiplier"));
 	Radius->DisplayName = LOCTEXT("ChainsawClearanceMultiplier", "Chainsaw clearance radius");
-	Radius->Tooltip = LOCTEXT("ChainsawClearanceMultiplierTooltip", "How far around a sawn tree or bush the chainsaw also clears and picks up foliage, as a multiple of the game's own radius (5 m): 1 is the game's own, 10 is 50 m. From 1 to 10.");
+	Radius->Tooltip = LOCTEXT("ChainsawClearanceMultiplierTooltip", "How far around a sawn tree or bush the chainsaw also clears and picks up foliage, as a multiple of the game's own radius (5 m): 1 is the game's own, 10 is 50 m, 20 is 100 m. From 1 to 20.");
 	Radius->DefaultValue = 1;
 	Radius->Value = 1;
 	Radius->bRequiresWorldReload = false;
@@ -204,6 +232,18 @@ void UMKIToolsConfiguration::BuildOptions()
 	SetBlueprintNumber(Radius, TEXT("MaxValue"), MaximumChainsawClearanceMultiplier);
 	SetBlueprintEnum(Radius, TEXT("Slider"));
 	Root->SectionProperties.Add(ChainsawClearanceMultiplierKey, Radius);
+	// The maintainer (2026-10-28): the object scanner's range, a 1-20 scale up to 200% more, its signal scaled with it.
+	UConfigPropertyInteger* Scanner = NewProperty<UConfigPropertyInteger>(Root, IntegerWidgetClass, TEXT("ObjectScannerRangeBonus"));
+	Scanner->DisplayName = LOCTEXT("ObjectScannerRangeBonus", "Object scanner range bonus");
+	Scanner->Tooltip = LOCTEXT("ObjectScannerRangeBonusTooltip", "How much farther the object scanner reaches than the game's own range, in steps of 10%. The beeps and the screen's reading scale with it: the scanner starts beeping at the new range, slowly, and beeps fastest only close to the object, as it does at the game's own range. 0 is the game's own, 10 is 100% farther (twice the range), 20 is 200% farther (three times the range). From 0 to 20.");
+	Scanner->DefaultValue = 0;
+	Scanner->Value = 0;
+	Scanner->bRequiresWorldReload = false;
+	Scanner->bHidden = false;
+	SetBlueprintNumber(Scanner, TEXT("MinValue"), 0.0);
+	SetBlueprintNumber(Scanner, TEXT("MaxValue"), MaximumObjectScannerRangeSteps);
+	SetBlueprintEnum(Scanner, TEXT("Slider"));
+	Root->SectionProperties.Add(ObjectScannerRangeKey, Scanner);
 	// The maintainer (2026-10-20): cut vegetation regrows at random, more likely the longer it has been gone; off by default.
 	UConfigPropertyBool* Regrowth = NewProperty<UConfigPropertyBool>(Root, BoolWidgetClass, TEXT("VegetationRegrowth"));
 	Regrowth->DisplayName = LOCTEXT("VegetationRegrowth", "Vegetation regrowth");
@@ -215,7 +255,7 @@ void UMKIToolsConfiguration::BuildOptions()
 	Root->SectionProperties.Add(VegetationRegrowthKey, Regrowth);
 	UConfigPropertyInteger* Hours = NewProperty<UConfigPropertyInteger>(Root, IntegerWidgetClass, TEXT("RegrowthHours"));
 	Hours->DisplayName = LOCTEXT("RegrowthHours", "Regrowth time (hours of play)");
-	Hours->Tooltip = LOCTEXT("RegrowthHoursTooltip", "The average time a cut plant takes to grow back, in hours of play. Some come back sooner, some later; the longer one has been gone, the more likely it returns. From 1 to 10.");
+	Hours->Tooltip = LOCTEXT("RegrowthHoursTooltip", "The average time a cut plant takes to grow back, in hours of play. Some come back sooner, some later; the longer one has been gone, the more likely it returns. From 1 to 20.");
 	Hours->DefaultValue = DefaultRegrowthHours;
 	Hours->Value = DefaultRegrowthHours;
 	Hours->bRequiresWorldReload = false;
@@ -224,6 +264,19 @@ void UMKIToolsConfiguration::BuildOptions()
 	SetBlueprintNumber(Hours, TEXT("MaxValue"), MaximumRegrowthHours);
 	SetBlueprintEnum(Hours, TEXT("Slider"));
 	Root->SectionProperties.Add(RegrowthHoursKey, Hours);
+	// The maintainer (2026-10-28): a "Fill Depot from inventory" checkbox next to the game's "Take from inventory before
+	// Depot" in the inventory's Dimensional Depot panel (UMKIDepotFillSubsystem); the same option shows here too.
+	UConfigPropertyBool* FillDepot = NewProperty<UConfigPropertyBool>(Root, BoolWidgetClass, TEXT("FillDepotFromInventory"));
+	FillDepot->DisplayName = LOCTEXT("FillDepotFromInventory", "Fill Depot from inventory");
+	FillDepot->Tooltip = LOCTEXT("FillDepotFromInventoryTooltip", "Every second, items in your inventory that the Dimensional Depot lists (even at 0) go into your depot upload queue, up to the depot's limit for that item. Queued items the depot has no room for come back to your inventory when there is room. Also a checkbox in the inventory's Dimensional Depot panel. An item taken out of the depot is left alone for a minute, to be used.");
+	FillDepot->DefaultValue = false;
+	FillDepot->Value = false;
+	FillDepot->bRequiresWorldReload = false;
+	FillDepot->bHidden = false;
+	Root->SectionProperties.Add(FillDepotFromInventoryKey, FillDepot);
+	// The maintainer (2026-10-29): the options are set under Options > MKI Tools, like the game's own (UMKIToolsOptionsMenu);
+	// here they are only kept and saved, so the Mods page shows the mod's details alone.
+	for (const TPair<FString, TObjectPtr<UConfigProperty>>& Entry : Root->SectionProperties) Entry.Value->bHidden = true;
 	Defaults->RootSection = Root;
 }
 
@@ -283,6 +336,18 @@ float UMKIToolsConfiguration::GetMovementSpeed(const UObject* WorldContext)
 	return Movement ? 1.f + MovementSpeedStep * FMath::Clamp(Movement->Value, 0, static_cast<int32>(MaximumMovementSpeedSteps)) : 1.f;
 }
 
+bool UMKIToolsConfiguration::GetFlightMode(const UObject* WorldContext)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	const UConfigManager* Config = GameInstance ? GameInstance->GetSubsystem<UConfigManager>() : nullptr;
+	FConfigId Id; Id.ModReference = TEXT("MKITools");
+	const UConfigPropertySection* Root = Config ? Config->GetConfigurationRootSection(Id) : nullptr;
+	const TObjectPtr<UConfigProperty>* Property = Root ? Root->SectionProperties.Find(FlightModeKey) : nullptr;
+	const UConfigPropertyBool* Flight = Property ? Cast<UConfigPropertyBool>(Property->Get()) : nullptr;
+	return Flight ? Flight->Value : false;
+}
+
 bool UMKIToolsConfiguration::GetCollectNearby(const UObject* WorldContext)
 {
 	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
@@ -317,6 +382,30 @@ bool UMKIToolsConfiguration::GetShortConveyorLifts(const UObject* WorldContext)
 	const TObjectPtr<UConfigProperty>* Property = Root ? Root->SectionProperties.Find(ShortConveyorLiftsKey) : nullptr;
 	const UConfigPropertyBool* ShortLifts = Property ? Cast<UConfigPropertyBool>(Property->Get()) : nullptr;
 	return ShortLifts ? ShortLifts->Value : true;
+}
+
+bool UMKIToolsConfiguration::GetHudReadouts(const UObject* WorldContext)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	const UConfigManager* Config = GameInstance ? GameInstance->GetSubsystem<UConfigManager>() : nullptr;
+	FConfigId Id; Id.ModReference = TEXT("MKITools");
+	const UConfigPropertySection* Root = Config ? Config->GetConfigurationRootSection(Id) : nullptr;
+	const TObjectPtr<UConfigProperty>* Property = Root ? Root->SectionProperties.Find(HudReadoutsKey) : nullptr;
+	const UConfigPropertyBool* Readouts = Property ? Cast<UConfigPropertyBool>(Property->Get()) : nullptr;
+	return Readouts ? Readouts->Value : true;
+}
+
+bool UMKIToolsConfiguration::GetDismantleUnusedSupports(const UObject* WorldContext)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	const UConfigManager* Config = GameInstance ? GameInstance->GetSubsystem<UConfigManager>() : nullptr;
+	FConfigId Id; Id.ModReference = TEXT("MKITools");
+	const UConfigPropertySection* Root = Config ? Config->GetConfigurationRootSection(Id) : nullptr;
+	const TObjectPtr<UConfigProperty>* Property = Root ? Root->SectionProperties.Find(DismantleUnusedSupportsKey) : nullptr;
+	const UConfigPropertyBool* UnusedSupports = Property ? Cast<UConfigPropertyBool>(Property->Get()) : nullptr;
+	return UnusedSupports ? UnusedSupports->Value : true;
 }
 
 float UMKIToolsConfiguration::GetHandCraftingSpeed(const UObject* WorldContext)
@@ -359,6 +448,18 @@ float UMKIToolsConfiguration::GetChainsawClearanceMultiplier(const UObject* Worl
 	return Radius ? FMath::Clamp(static_cast<float>(Radius->Value), 1.f, MaximumChainsawClearanceMultiplier) : 1.f;
 }
 
+float UMKIToolsConfiguration::GetObjectScannerRange(const UObject* WorldContext)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	const UConfigManager* Config = GameInstance ? GameInstance->GetSubsystem<UConfigManager>() : nullptr;
+	FConfigId Id; Id.ModReference = TEXT("MKITools");
+	const UConfigPropertySection* Root = Config ? Config->GetConfigurationRootSection(Id) : nullptr;
+	const TObjectPtr<UConfigProperty>* Property = Root ? Root->SectionProperties.Find(ObjectScannerRangeKey) : nullptr;
+	const UConfigPropertyInteger* Range = Property ? Cast<UConfigPropertyInteger>(Property->Get()) : nullptr;
+	return Range ? 1.f + ObjectScannerRangeStep * FMath::Clamp(Range->Value, 0, static_cast<int32>(MaximumObjectScannerRangeSteps)) : 1.f;
+}
+
 bool UMKIToolsConfiguration::GetVegetationRegrowth(const UObject* WorldContext)
 {
 	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
@@ -381,6 +482,36 @@ float UMKIToolsConfiguration::GetRegrowthHours(const UObject* WorldContext)
 	const TObjectPtr<UConfigProperty>* Property = Root ? Root->SectionProperties.Find(RegrowthHoursKey) : nullptr;
 	const UConfigPropertyInteger* Hours = Property ? Cast<UConfigPropertyInteger>(Property->Get()) : nullptr;
 	return Hours ? FMath::Clamp(static_cast<float>(Hours->Value), 1.f, MaximumRegrowthHours) : DefaultRegrowthHours;
+}
+
+namespace
+{
+	UConfigPropertyBool* FindFillDepotOption(const UObject* WorldContext)
+	{
+		const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+		const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+		const UConfigManager* Config = GameInstance ? GameInstance->GetSubsystem<UConfigManager>() : nullptr;
+		FConfigId Id; Id.ModReference = TEXT("MKITools");
+		const UConfigPropertySection* Root = Config ? Config->GetConfigurationRootSection(Id) : nullptr;
+		const TObjectPtr<UConfigProperty>* Property = Root ? Root->SectionProperties.Find(UMKIToolsConfiguration::FillDepotFromInventoryKey) : nullptr;
+		return Property ? Cast<UConfigPropertyBool>(Property->Get()) : nullptr;
+	}
+}
+
+bool UMKIToolsConfiguration::GetFillDepotFromInventory(const UObject* WorldContext)
+{
+	const UConfigPropertyBool* FillDepot = FindFillDepotOption(WorldContext);
+	return FillDepot ? FillDepot->Value : false;
+}
+
+void UMKIToolsConfiguration::SetFillDepotFromInventory(const UObject* WorldContext, bool bFill)
+{
+	UConfigPropertyBool* FillDepot = FindFillDepotOption(WorldContext);
+	if (!FillDepot || FillDepot->Value == bFill) return;
+	FillDepot->Value = bFill;
+	// SML saves a property marked dirty (its root section hands it to the config manager, which writes it shortly after).
+	FillDepot->MarkDirty();
+	UE_LOG(LogMKITools, Log, TEXT("Depot fill: option %s"), bFill ? TEXT("on") : TEXT("off"));
 }
 
 #undef LOCTEXT_NAMESPACE

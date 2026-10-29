@@ -1,5 +1,22 @@
 # Changelog
 
+## MKI Tools 0.4.0 and MKI Roads 0.8.2 (2026-10-29)
+
+MKI Bridge stays 0.4.6.
+
+- **MKI Tools 0.4.0.** Requires only SML.
+  - **Settings under Options > MKI Tools.** The settings moved from Mods > MKI Tools to their own tab in the game's Options menu, grouped (Player, Items & Inventory, Building, Equipment, World) and used like the game's own settings: checkboxes and sliders, a description for the hovered row, search, Apply and Reset to Default. Values set before carry over. The Inventory Slots row shows the inventory's size and adds 10 slots per press.
+  - **Area dismantle mode:** after Terrain, a dismantle gun mode that takes everything in a cube of 16 to 96 m around the aimed building or point, belts and their supports included, and leaves the floor under an aimed machine.
+  - **Foundation area zoop:** foundations zoop as a rectangle as well as a line, up to the game's own 10 by 10.
+  - **Dismantle unused supports:** dismantling a belt, lift, pipe or hypertube also takes the poles, mounts and supports it leaves holding nothing, outlined red first and refunded (option, on by default).
+  - **Elevation and length readouts:** the player's elevation under the compass and, while building, the hologram's elevation and the length of belts, pipes, rails, hypertubes, roads and power lines (option, on by default).
+  - **Fill Depot from inventory:** items in the inventory that the Dimensional Depot lists go into the depot's upload queue, up to its limit (option, off by default). The depot panel lists its items A-Z.
+  - **Object scanner range bonus:** up to three times the scanner's range, its beeps scaled to match.
+  - **Terrain mode breaks nobelisk rocks**, for limestone.
+  - **Movement:** the movement speed bonus counts sideways only, everywhere; a Flight mode switch for flying by a double jump, which moves at the ground's walking and sprinting speeds (Blade Runners included). Every numeric option runs to 20, and collecting nearby items reaches 100 m.
+  - **Fixes:** the chainsaw's pickup effect and hand mining that ends mid-cycle no longer crash the game; a double jump while gliding no longer starts flight.
+- **MKI Roads 0.8.2.** A Lane Transition piece from 4 lanes to 2; Shift keeps a road level while placing; lane switches on the 4-lane truck depots; a Double Street Light for the road's centre line. Fixed: road paths stayed red where a later road piece joined, and dismantling a truck station on a depot left its legs behind.
+
 ## MKI Tools 0.3.0, MKI Roads 0.8.1 and MKI Bridge 0.4.6 (2026-10-22)
 
 - **MKI Tools 0.3.0 (new).** Requires only SML; MKI Roads and MKI Bridge do not need it.

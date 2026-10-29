@@ -96,6 +96,15 @@ FTransform AMKIRoadJunctionHologram::FaceSideToEnd(int32 Arms, int32 Lanes, int3
 	return FTransform(Rotation, EndLocation - Rotation.RotateVector(FVector(Contact.X, Contact.Y, 0.f)));
 }
 
+int32 AMKIRoadJunctionHologram::JoinTurn(int32 Lanes) const
+{
+	// A lane transition joins with its end of the same width: the 2-lane end is its +X side (quarter turn 0), the 4-lane end -X (2).
+	if (!AMKIRoadJunction::IsLaneTransitionShape(ArmCount())) return mQuarterTurns;
+	if (Lanes == AMKIRoadJunction::TransitionNarrowLanes) return 0;
+	if (Lanes == AMKIRoadJunction::TransitionWideLanes) return 2;
+	return mQuarterTurns;
+}
+
 void AMKIRoadJunctionHologram::TakeLanesFrom(const AActor* Source, int32 Lanes)
 {
 	// Once per road or piece aimed at (#238), so Plus and Minus still change the width while joined there.
@@ -106,7 +115,8 @@ void AMKIRoadJunctionHologram::TakeLanesFrom(const AActor* Source, int32 Lanes)
 
 void AMKIRoadJunctionHologram::SetLanes(int32 Lanes)
 {
-	// A depot on both sides takes 2 or 4 lanes (#240); Minus stops at 2.
+	// A depot on both sides takes 2 or 4 lanes (#240); Minus stops at 2. A lane transition's width is fixed.
+	if (AMKIRoadJunction::IsLaneTransitionShape(ArmCount())) Lanes = AMKIRoadJunction::TransitionWideLanes;
 	if (!AMKIRoadJunction::IsSupportedLaneCount(Lanes) || Lanes == mLanes) return;
 	mLanes = Lanes;
 	UpdatePreview();
@@ -126,6 +136,7 @@ void AMKIRoadJunctionHologram::BeginPlay()
 	mPreviewMarkings->SetCastShadow(false);
 	mPreviewMarkings->RegisterComponent();
 	if (IsLocalHologram()) RegisterLaneInput();
+	if (AMKIRoadJunction::IsLaneTransitionShape(ArmCount())) mLanes = AMKIRoadJunction::TransitionWideLanes;
 	UpdatePreview();
 }
 
@@ -148,7 +159,7 @@ void AMKIRoadJunctionHologram::SetHologramLocationAndRotation(const FHitResult& 
 		if (AMKIRoadSplineRoad::NearEnd(*Road, HitResult.Location, End, Outward) && !Outward.GetSafeNormal2D().IsNearlyZero())
 		{
 			TakeLanesFrom(Road, Road->GetLanes());
-			SetActorTransform(FaceSideToEnd(ArmCount(), mLanes, mQuarterTurns, End, Outward.GetSafeNormal2D()));
+			SetActorTransform(FaceSideToEnd(ArmCount(), mLanes, JoinTurn(Road->GetLanes()), End, Outward.GetSafeNormal2D()));
 			mJoinedTo = const_cast<AMKIRoadSplineRoad*>(Road);
 			return;
 		}
@@ -161,9 +172,10 @@ void AMKIRoadJunctionHologram::SetHologramLocationAndRotation(const FHitResult& 
 		bool bArm = false;
 		if (Other->NearSide(HitResult.Location, OnSide, Outward, bArm))
 		{
-			if (bArm) TakeLanesFrom(Other, Other->GetLanes());
+			const int32 ArmLanes = bArm ? Other->GetLanesAtArm(OnSide) : 0;
+			if (bArm) TakeLanesFrom(Other, ArmLanes);
 			mJoinedTo = const_cast<AMKIRoadJunction*>(Other);
-			SetActorTransform(FaceSideToEnd(ArmCount(), mLanes, mQuarterTurns, OnSide, Outward));
+			SetActorTransform(FaceSideToEnd(ArmCount(), mLanes, bArm ? JoinTurn(ArmLanes) : mQuarterTurns, OnSide, Outward));
 			return;
 		}
 	}

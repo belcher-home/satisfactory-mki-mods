@@ -141,7 +141,7 @@ namespace
 		AActor* Rock = Aim.Rock.Get();
 		UHierarchicalInstancedStaticMeshComponent* Foliage = Aim.Foliage.Get();
 		const FString Name = Rock ? Rock->GetName() : FString::Printf(TEXT("boulder %s"), *Aim.InstanceLocation.ToString());
-		if (Rock)
+		if (Rock && !FMKITerrainRules::IsTerrainTarget(Rock))
 		{
 			const FString Refusal = FMKITerrainRules::RefusalReason(Rock);
 			if (!Refusal.IsEmpty()) { UE_LOG(LogMKITools, Warning, TEXT("Terrain: %s cannot be removed (%s)"), *Name, *Refusal); return; }
@@ -198,7 +198,7 @@ void FMKITerrainDismantle::Tick(UFGBuildGunStateDismantle* State, float DeltaTim
 	if (Character->GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, ViewLocation + ViewRotation.Vector() * FMKITerrainRules::MaximumReachCm, ECC_Visibility, Query))
 	{
 		AActor* HitActor = Hit.GetActor();
-		if (HitActor && FMKITerrainRules::RefusalReason(HitActor).IsEmpty()) TargetRock = HitActor;
+		if (HitActor && FMKITerrainRules::IsTerrainTarget(HitActor)) TargetRock = HitActor;
 		// Boulders the game places as foliage. The maintainer (2026-10-20): they are the chainsaw's ("Chainsaw cuts boulders",
 		// with the game's own pickup popup); Terrain mode takes them only while that option is off, so none is ever left
 		// without a way to remove it.

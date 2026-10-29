@@ -26,6 +26,7 @@ const baseGameClassPath = z.string().regex(/^\/Game\/FactoryGame\/(?:[A-Za-z0-9_
 const scriptClassPath = z.string().regex(/^\/Script\/[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/);
 const projectFolder = z.string().regex(/^\/MKIRoads\/[A-Za-z0-9_/]+[A-Za-z0-9_]$/);
 const hexColor = z.string().regex(/^#[0-9a-f]{6}$/);
+const vector3 = z.tuple([z.number(), z.number(), z.number()]);
 /** A build-menu subcategory of the MKI Packs category. */
 const buildSubCategory = z.object({ path: projectClassPath, displayName: z.string().min(1), menuPriority: z.number() }).strict();
 /** The MKI Roads content plugin that owns every project asset in the manifest. */
@@ -125,8 +126,8 @@ const packageSchema = z.object({
       hologramClass: z.literal("/Script/MKIRoads.MKIRoadJunctionHologram"),
       thicknessCm: z.union([z.literal(100), z.literal(200), z.literal(400)]),
       description: z.string().min(1),
-      /** arms 1 (#236) is a turnaround, 7 and 9 (#237, #240, #251) the truck depot on one side or both (the small depots, 6 and 8, are gone); an entry's own description replaces the intersections'. */
-      entries: z.array(z.object({ stem: z.string().regex(/^[A-Za-z0-9]+$/), displayName: z.string().min(1), arms: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(7), z.literal(9)]), description: z.string().min(1).optional() }).strict()).min(1),
+      /** arms 1 (#236) is a turnaround, 7 and 9 (#237, #240, #251) the truck depot on one side or both (the small depots, 6 and 8, are gone), 11 the 4-to-2 lane transition; an entry's own description replaces the intersections'. */
+      entries: z.array(z.object({ stem: z.string().regex(/^[A-Za-z0-9]+$/), displayName: z.string().min(1), arms: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(7), z.literal(9), z.literal(11)]), description: z.string().min(1).optional() }).strict()).min(1),
       evidence: z.string().min(1),
     }).strict(),
     /**
@@ -165,6 +166,33 @@ const packageSchema = z.object({
     entries: z.array(z.object({
       stem: z.string().regex(/^[A-Za-z0-9]+$/), displayName: z.string().min(1), description: z.string().min(1),
       vanillaDescriptor: baseGamePath, vanillaRecipe: baseGamePath, baseMesh: baseGamePath, middleMesh: baseGamePath,
+    }).strict()).min(1),
+    evidence: z.string().min(1),
+  }).strict(),
+  /**
+   * Street lights for the road center (#400): Blueprints of the vanilla street light with a mesh made from the vanilla one
+   * (mods/MKIRoads/blender/street_light_double.py: one power connection on top of the pole, an arm and lamp each side)
+   * and a decoration template with a pooled spot light and light shaft under each lamp.
+   */
+  streetLights: z.object({
+    folder: projectFolder,
+    subCategory: projectClassPath,
+    spotLightComponent: baseGamePath,
+    lightShaftComponent: baseGamePath,
+    entries: z.array(z.object({
+      stem: z.string().regex(/^[A-Za-z0-9]+$/), displayName: z.string().min(1), description: z.string().min(1),
+      vanillaBuildable: baseGamePath, vanillaDescriptor: baseGamePath, vanillaRecipe: baseGamePath, vanillaMesh: baseGamePath,
+      /** The mesh's material slots, in order, and the vanilla material each takes. */
+      materials: z.array(z.object({ slot: z.string().regex(/^[A-Za-z0-9_]+$/), material: baseGamePath }).strict()).min(1),
+      /** How much shorter than vanilla each thin outer arm is, along its pitch. */
+      armTrimCm: z.number().min(0),
+      /** Times the vanilla street light's ingredients and power. */
+      costMultiplier: z.number().int().positive(), powerMultiplier: z.number().positive(),
+      /** Actor-relative positions (cm) the mesh build reports; the meshes step fails unless they match. */
+      powerConnectionCm: vector3,
+      /** Power lines the connection takes (vanilla street light: 2); 4 lets lights be daisy chained along a road. */
+      powerConnectionLinks: z.number().int().min(1).max(8),
+      lamps: z.array(z.object({ spotLightCm: vector3, lightShaftCm: vector3, yawDeg: z.number() }).strict()).min(1),
     }).strict()).min(1),
     evidence: z.string().min(1),
   }).strict(),
@@ -209,13 +237,20 @@ function semanticErrors(document: RoadKitDocument): string[] {
     referenced.add(path);
     if (!placeholders.has(path)) errors.push(`${where}: base-game asset ${path} has no registered placeholder`);
   };
-  const { buildMenu, cost, producedIn, unlockRecipeClass, asphalt, markings, splineRoad, supports } = document.package;
+  const { buildMenu, cost, producedIn, unlockRecipeClass, asphalt, markings, splineRoad, supports, streetLights } = document.package;
   for (const [key, path] of Object.entries({
     categoryIcon: buildMenu.categoryIcon, costBasisRecipe: cost.basisRecipe, producedIn, unlockRecipeClass,
     asphaltFoundationRecipe: asphalt.vanillaFoundationRecipe, asphaltDefaultSwatch: asphalt.defaultSwatch, splineRoadSurfaceMaterial: splineRoad.surfaceMaterial,
   })) reference(`package.${key}`, path);
   supports.entries.forEach((entry, index) => {
     for (const key of ["vanillaDescriptor", "vanillaRecipe", "baseMesh", "middleMesh"] as const) reference(`package.supports.entries[${index}].${key}`, entry[key]);
+  });
+  reference("package.streetLights.spotLightComponent", streetLights.spotLightComponent);
+  reference("package.streetLights.lightShaftComponent", streetLights.lightShaftComponent);
+  streetLights.entries.forEach((entry, index) => {
+    for (const key of ["vanillaBuildable", "vanillaDescriptor", "vanillaRecipe", "vanillaMesh"] as const) reference(`package.streetLights.entries[${index}].${key}`, entry[key]);
+    entry.materials.forEach((item, slot) => reference(`package.streetLights.entries[${index}].materials[${slot}]`, item.material));
+    if (new Set(entry.materials.map((item) => item.slot)).size !== entry.materials.length) errors.push(`package.streetLights.entries[${index}].materials: duplicate slot`);
   });
   if (new Set(cost.perFoundation.map((item) => item.item)).size !== cost.perFoundation.length) errors.push("package.cost.perFoundation: duplicate item");
   // Every project asset the import creates has its own path.
@@ -240,7 +275,8 @@ function semanticErrors(document: RoadKitDocument): string[] {
   // The spline road entries are listed in one declared subcategory, and no subcategory is empty.
   if (!buildMenu.subCategories.some((item) => item.path === splineRoad.subCategory)) errors.push(`package.splineRoad.subCategory ${splineRoad.subCategory} is not one of package.buildMenu.subCategories`);
   if (!buildMenu.subCategories.some((item) => item.path === supports.subCategory)) errors.push(`package.supports.subCategory ${supports.subCategory} is not one of package.buildMenu.subCategories`);
-  for (const item of buildMenu.subCategories) if (![splineRoad.subCategory, supports.subCategory].includes(item.path)) errors.push(`package.buildMenu.subCategories: ${item.displayName} lists nothing`);
+  if (!buildMenu.subCategories.some((item) => item.path === streetLights.subCategory)) errors.push(`package.streetLights.subCategory ${streetLights.subCategory} is not one of package.buildMenu.subCategories`);
+  for (const item of buildMenu.subCategories) if (![splineRoad.subCategory, supports.subCategory, streetLights.subCategory].includes(item.path)) errors.push(`package.buildMenu.subCategories: ${item.displayName} lists nothing`);
   // One entry per deck thickness, each with its own assets.
   for (const key of ["thicknessCm", "stem", "displayName"] as const) if (new Set(splineRoad.variants.map((item) => item[key])).size !== splineRoad.variants.length) errors.push(`package.splineRoad.variants: duplicate ${key}`);
   for (const key of ["id", "stem", "displayName"] as const) if (new Set(splineRoad.patterns.entries.map((item) => item[key])).size !== splineRoad.patterns.entries.length) errors.push(`package.splineRoad.patterns.entries: duplicate ${key}`);
@@ -253,6 +289,8 @@ function semanticErrors(document: RoadKitDocument): string[] {
   for (const item of patterns.entries) for (const path of [item.descriptorPath, item.recipePath, item.iconPath]) claim(`package.splineRoad.patterns ${item.displayName}`, path);
   if (new Set(supports.entries.map((item) => item.stem)).size !== supports.entries.length) errors.push("package.supports.entries: duplicate stem");
   for (const item of roadSupportEntries(document)) for (const path of [item.classPath, item.descriptorPath, item.recipePath]) claim(`package.supports ${item.displayName}`, path);
+  if (new Set(streetLights.entries.map((item) => item.stem)).size !== streetLights.entries.length) errors.push("package.streetLights.entries: duplicate stem");
+  for (const item of roadStreetLightEntries(document)) for (const path of [item.classPath, item.descriptorPath, item.recipePath, item.decoratorPath, item.meshPath]) claim(`package.streetLights ${item.displayName}`, path);
   for (const path of placeholders.keys()) if (!referenced.has(path)) errors.push(`placeholder ${path}: not referenced by any package setting`);
   return errors;
 }
@@ -309,7 +347,7 @@ export function splineRoadVariants(kit: RoadKitDocument): SplineRoadVariant[] {
 
 /** A road intersection build-menu entry (#227): Blueprints of the native MKIRoadJunction, one per arm count. */
 export interface RoadJunctionEntry {
-  arms: 1 | 2 | 3 | 4 | 7 | 9; thicknessCm: number; displayName: string; description: string; menuPriority: number;
+  arms: 1 | 2 | 3 | 4 | 7 | 9 | 11; thicknessCm: number; displayName: string; description: string; menuPriority: number;
   classPath: string; descriptorPath: string; recipePath: string; iconPath: string;
   parentClass: string; hologramClass: string;
   buildMenu: { category: string; subCategory: string };
@@ -416,6 +454,74 @@ export function roadSupportEntries(kit: RoadKitDocument): RoadSupportEntry[] {
   });
 }
 
+/** A road street light build-menu entry (#400): a Blueprint of the vanilla street light with its own mesh and lamps. */
+export interface RoadStreetLightEntry {
+  stem: string; displayName: string; description: string; menuPriority: number;
+  classPath: string; descriptorPath: string; recipePath: string;
+  /** The decoration template (one pooled spot light and light shaft per lamp) and the mesh, both built by the import. */
+  decoratorPath: string; meshPath: string;
+  /** The mesh the meshes step builds from the vanilla one, which the import reads (`.local/road-pack/meshes/<file>`). */
+  meshFile: string;
+  parentClass: string; vanillaDescriptor: string; vanillaRecipe: string; vanillaMesh: string;
+  spotLightComponent: string; lightShaftComponent: string;
+  materials: { slot: string; material: string }[];
+  armTrimCm: number; costMultiplier: number; powerMultiplier: number;
+  powerConnectionCm: [number, number, number];
+  powerConnectionLinks: number;
+  lamps: { spotLightCm: [number, number, number]; lightShaftCm: [number, number, number]; yawDeg: number }[];
+  buildMenu: { category: string; subCategory: string };
+}
+
+/** The road street light entries, after the supports in their MKI Packs subcategory (package.streetLights.subCategory). */
+export function roadStreetLightEntries(kit: RoadKitDocument): RoadStreetLightEntry[] {
+  const settings = kit.package.streetLights, menu = kit.package.buildMenu;
+  return settings.entries.map((entry, index) => {
+    const stem = `MKIR_${entry.stem}`;
+    return {
+      stem: entry.stem, displayName: entry.displayName, description: entry.description, menuPriority: round(menu.menuPriority - 0.3 + index * 0.01, 6),
+      classPath: classPath(settings.folder, `Build_${stem}`), descriptorPath: classPath(settings.folder, `Desc_${stem}`), recipePath: classPath(settings.folder, `Recipe_${stem}`),
+      decoratorPath: classPath(settings.folder, `Deco_${stem}`), meshPath: `${settings.folder}/SM_${stem}.SM_${stem}`, meshFile: `SM_${stem}.fbx`,
+      parentClass: `${entry.vanillaBuildable}_C`, vanillaDescriptor: entry.vanillaDescriptor, vanillaRecipe: entry.vanillaRecipe, vanillaMesh: entry.vanillaMesh,
+      spotLightComponent: `${settings.spotLightComponent}_C`, lightShaftComponent: `${settings.lightShaftComponent}_C`,
+      materials: entry.materials, armTrimCm: entry.armTrimCm, costMultiplier: entry.costMultiplier, powerMultiplier: entry.powerMultiplier,
+      powerConnectionCm: entry.powerConnectionCm, powerConnectionLinks: entry.powerConnectionLinks, lamps: entry.lamps,
+      buildMenu: { category: menu.category.path, subCategory: settings.subCategory },
+    };
+  });
+}
+
+/** What mods/MKIRoads/blender/street_light_double.py reports about the mesh it built (its meta JSON). */
+export interface StreetLightMeshMeta {
+  armTrimCm: number; powerConnectionCm: number[]; lamps: { spotLightCm: number[]; lightShaftCm: number[]; yawDeg: number }[];
+  triangles: number; collisionHulls: number;
+  /** Triangles per material slot; a slot without any is dropped by the Unreal import. */
+  slotTriangles: Record<string, number>;
+}
+
+/**
+ * Why a built street light mesh does not fit its manifest entry: the arm trim it was built with, and the power connection
+ * and lamp positions it reports, must equal the entry's (to 0.1 cm), since the import places the power connection and the
+ * pooled lights from the entry. Empty when it fits.
+ */
+export function streetLightMeshProblems(entry: Pick<RoadStreetLightEntry, "displayName" | "armTrimCm" | "powerConnectionCm" | "lamps" | "materials">, meta: StreetLightMeshMeta): string[] {
+  const problems: string[] = [];
+  const near = (a: readonly number[], b: readonly number[]) => a.length === b.length && a.every((value, index) => Math.abs(value - b[index]!) <= 0.1);
+  if (meta.armTrimCm !== entry.armTrimCm) problems.push(`${entry.displayName}: the mesh was built with armTrimCm ${meta.armTrimCm}, the manifest says ${entry.armTrimCm}`);
+  if (!near(meta.powerConnectionCm, entry.powerConnectionCm)) problems.push(`${entry.displayName}: the mesh puts the power connection at ${JSON.stringify(meta.powerConnectionCm)}, the manifest at ${JSON.stringify(entry.powerConnectionCm)}`);
+  if (meta.lamps.length !== entry.lamps.length) problems.push(`${entry.displayName}: the mesh has ${meta.lamps.length} lamps, the manifest ${entry.lamps.length}`);
+  else meta.lamps.forEach((lamp, index) => {
+    const expected = entry.lamps[index]!;
+    if (!near(lamp.spotLightCm, expected.spotLightCm) || !near(lamp.lightShaftCm, expected.lightShaftCm) || lamp.yawDeg !== expected.yawDeg) {
+      problems.push(`${entry.displayName}: lamp ${index} is ${JSON.stringify(lamp)} in the mesh, ${JSON.stringify(expected)} in the manifest`);
+    }
+  });
+  if (meta.collisionHulls < 1) problems.push(`${entry.displayName}: the mesh has no collision hulls`);
+  const slots = Object.keys(meta.slotTriangles ?? {});
+  if (JSON.stringify(slots) !== JSON.stringify(entry.materials.map((item) => item.slot))) problems.push(`${entry.displayName}: the mesh has material slots ${JSON.stringify(slots)}, the manifest ${JSON.stringify(entry.materials.map((item) => item.slot))}`);
+  for (const slot of slots) if (!(meta.slotTriangles[slot]! > 0)) problems.push(`${entry.displayName}: material slot ${slot} has no triangles, so the import would drop it`);
+  return problems;
+}
+
 /** Every package the MKI Roads import step creates (`/MKIRoads/.../Name`), sorted. */
 export function roadPackAssetPackages(kit: RoadKitDocument): string[] {
   const { buildMenu, schematic, rootModulePath, markings } = kit.package, patterns = splineRoadPatterns(kit);
@@ -427,13 +533,14 @@ export function roadPackAssetPackages(kit: RoadKitDocument): string[] {
     ...roadJunctionEntries(kit).flatMap((item) => [item.classPath, item.descriptorPath, item.recipePath, item.iconPath]),
     patterns.categoryPath, patterns.subCategoryPath, ...patterns.entries.flatMap((item) => [item.descriptorPath, item.recipePath, item.iconPath]),
     ...roadSupportEntries(kit).flatMap((item) => [item.classPath, item.descriptorPath, item.recipePath]),
+    ...roadStreetLightEntries(kit).flatMap((item) => [item.classPath, item.descriptorPath, item.recipePath, item.decoratorPath, item.meshPath]),
   ].map((path) => path.split(".")[0]))].sort();
 }
 
 /** Everything the editor import and verify steps build from (the Python step reads this instead of re-deriving it). */
 export function roadPackEditorPlan(kit: RoadKitDocument) {
   return {
-    schema: "mki-roads.editor-plan", schemaVersion: 16,
+    schema: "mki-roads.editor-plan", schemaVersion: 17,
     assetPackages: roadPackAssetPackages(kit),
     /** The two paint materials the road marking patterns draw with (#159). */
     paints: kit.package.markings.paints,
@@ -441,6 +548,8 @@ export function roadPackEditorPlan(kit: RoadKitDocument) {
     splineRoad: { ...kit.package.splineRoad, entries: splineRoadVariants(kit), junctions: roadJunctionEntries(kit), patterns: splineRoadPatterns(kit) },
     /** Road supports (#194). */
     supports: { ...kit.package.supports, entries: roadSupportEntries(kit) },
+    /** Street lights for the road center (#400). */
+    streetLights: { ...kit.package.streetLights, entries: roadStreetLightEntries(kit) },
   };
 }
 export type RoadPackEditorPlan = ReturnType<typeof roadPackEditorPlan>;

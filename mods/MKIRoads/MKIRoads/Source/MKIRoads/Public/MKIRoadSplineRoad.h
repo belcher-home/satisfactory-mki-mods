@@ -319,6 +319,9 @@ protected:
 	/** The FMKIRoadAutoPaths::Version its paths were laid with: older ones are laid again (#235: the first did not join). */
 	UPROPERTY(SaveGame)
 	int32 mAutoPathsVersion = 0;
+	/** Whether the paths around it were validated again once its floor stood (#396: paths of older neighbours ending on it). */
+	UPROPERTY(SaveGame)
+	bool mNearbyPathsRevalidated = false;
 	/**
 	 * Whether the road has had the default North American Road pattern offered once (#316). The build gun paints a new road
 	 * (#234), but roads spawned without it (the bridge's /v1/place-spline-road) had none; a road painted over later keeps

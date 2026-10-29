@@ -135,10 +135,10 @@ export function renderRoadPatternIcon(spec: SplineRoadIconSpec, size: number): R
 }
 
 /** One intersection entry's icon (#227): its arms (3 or 4), drawn on a 2-lane junction. */
-export interface RoadJunctionIconSpec { iconPath: string; key: string; arms: 1 | 2 | 3 | 4 | 7 | 9 }
+export interface RoadJunctionIconSpec { iconPath: string; key: string; arms: 1 | 2 | 3 | 4 | 7 | 9 | 11 }
 
 export function roadJunctionIconSpecs(kit: RoadKitDocument): RoadJunctionIconSpec[] {
-  return roadJunctionEntries(kit).map((entry) => ({ iconPath: entry.iconPath, key: entry.arms === 1 ? "road_turnaround" : entry.arms >= 6 ? `road_truck_depot_${entry.arms}` : `road_junction_${entry.arms}way`, arms: entry.arms }));
+  return roadJunctionEntries(kit).map((entry) => ({ iconPath: entry.iconPath, key: entry.arms === 1 ? "road_turnaround" : entry.arms === TRANSITION_ARMS ? "road_lane_transition" : entry.arms >= 6 ? `road_truck_depot_${entry.arms}` : `road_junction_${entry.arms}way`, arms: entry.arms }));
 }
 
 /**
@@ -146,6 +146,16 @@ export function roadJunctionIconSpecs(kit: RoadKitDocument): RoadJunctionIconSpe
  * end's corners (2, +-1)), in half road widths: outside that curve the square deck is white (#316).
  */
 const TURN_ISLAND = 0.7, TURN_RADIUS = 1.9, TURN_SLOPE = 0.615, TURN_TANGENT_X = TURN_SLOPE * TURN_RADIUS / Math.sqrt(TURN_SLOPE * TURN_SLOPE + 1);
+
+/**
+ * A lane transition (arms 11): its 4-lane end at x = -2 (|y| <= 1) and its 2-lane end at x = 2 (|y| <= 0.5), the deck the
+ * full width up to the taper's end at TRANSITION_TAPER_END, the taper line running in from the wide end's edge to the neck's.
+ */
+const TRANSITION_ARMS = 11, TRANSITION_TAPER_END = 1, TRANSITION_DROP_END = -0.5;
+/** The taper line's outer edge at x: from the 4-lane edge (1) at x = -2 to the 2-lane edge (0.5) at the taper's end. */
+function transitionTaperY(x: number): number {
+  return x >= TRANSITION_TAPER_END ? 0.5 : 1 - 0.5 * (x + 2) / (TRANSITION_TAPER_END + 2);
+}
 
 /** Inside a turnaround's old round end (#236), drawn in by trim: the drivable part of its square deck (#316). */
 function insideTurnaroundBulb(x: number, y: number, trim: number): boolean {
@@ -166,6 +176,7 @@ function insideJunction(x: number, y: number, arms: number): boolean {
   if (arms === 7) return ax <= 2 && y >= -1 && y <= 1.5 && !(y > 1 && ax > 1.6);
   if (arms === 9) return ax <= 2 && ay <= 1.5 && !(ay > 1 && ax > 1.6);
   if (arms === 1) return ax <= 2 && ay <= 2;
+  if (arms === TRANSITION_ARMS) return ax <= 2 && ay <= (x <= TRANSITION_TAPER_END ? 1 : 0.5);
   if (ax > 2 || ay > 2) return false;
   if (ax <= 1 && ay <= 1) return true;
   // A 2-way (#228) is a corner: the +x arm and the stem only.
@@ -202,6 +213,12 @@ function roadPieceLine(x: number, y: number, arms: number, half: number, pair: n
     const ring = TURN_ISLAND, r = Math.sqrt(x * x + y * y);
     if (Math.abs(r - ring) <= half) return 1;
     return onPairY && x >= ring && x <= 2 ? 1 : 0;
+  }
+  if (arms === TRANSITION_ARMS) {
+    if (onPairY && ax <= 2) return 1;
+    // The dotted lane-drop line, twice a line wide, between the through lane and the ending one.
+    if (Math.abs(ay - 0.5) <= half * 2 && x <= TRANSITION_DROP_END && (x + 2) % (dash * 2) < dash * 0.6) return 2;
+    return 0;
   }
   if (arms === 7 || arms === 9) {
     if (onPairY && ax <= 2) return 1;
@@ -253,7 +270,7 @@ export function renderRoadJunctionIcon(kit: RoadKitDocument, spec: RoadJunctionI
             && insideJunction(x + far * 0.7071, y + far * 0.7071, arms) && insideJunction(x - far * 0.7071, y + far * 0.7071, arms) && insideJunction(x + far * 0.7071, y - far * 0.7071, arms) && insideJunction(x - far * 0.7071, y - far * 0.7071, arms);
           const keepsNear = insideJunction(x + near, y, arms) && insideJunction(x - near, y, arms) && insideJunction(x, y + near, arms) && insideJunction(x, y - near, arms)
             && insideJunction(x + near * 0.7071, y + near * 0.7071, arms) && insideJunction(x - near * 0.7071, y + near * 0.7071, arms) && insideJunction(x + near * 0.7071, y - near * 0.7071, arms) && insideJunction(x - near * 0.7071, y - near * 0.7071, arms);
-          const atArmEnd = arms === 1 ? x > 2 - near && Math.abs(y) <= 1 : arms >= 6 ? Math.abs(x) > 2 - near && Math.abs(y) <= 1 : (Math.abs(x) > 2 - near && Math.abs(y) <= 1) || (Math.abs(y) > 2 - near && Math.abs(x) <= 1);
+          const atArmEnd = arms === TRANSITION_ARMS ? (x < -2 + near && Math.abs(y) <= 1) || (x > 2 - near && Math.abs(y) <= 0.5) : arms === 1 ? x > 2 - near && Math.abs(y) <= 1 : arms >= 6 ? Math.abs(x) > 2 - near && Math.abs(y) <= 1 : (Math.abs(x) > 2 - near && Math.abs(y) <= 1) || (Math.abs(y) > 2 - near && Math.abs(x) <= 1);
           // The non-drivable margin is white to the edge (#316): a trim from every edge but the arm ends in to the old line's
           // inner side; on a corner tile (#314) everything beyond the curb return (a quarter circle of one unit, the 8 m
           // curb, about the outer corner, widened by the trim); on a turnaround everything outside its old round end.
@@ -266,7 +283,14 @@ export function renderRoadJunctionIcon(kit: RoadKitDocument, spec: RoadJunctionI
           // In front of each bay, the pad's edge in yellow on the deck side, in line with the white either side (#316).
           const padFront = (arms === 7 || arms === 9) && Math.abs(x) <= 1.33 && ((y <= 1.5 && y >= 1.5 - near) || (arms === 9 && y >= -1.5 && y <= -1.5 + near));
           if (padFront) { r += yellowR; g += yellowG; b += yellowB; covered++; continue; }
-          const marking = curb || surround || stub || (!keepsNear && !atArmEnd && !corner) ? 2 : roadPieceLine(x, y, arms, half, pair, dash);
+          // A lane transition's taper line, and the white hatching beyond it (not drivable).
+          let taper = false;
+          if (arms === TRANSITION_ARMS && x <= TRANSITION_TAPER_END) {
+            const edge = transitionTaperY(x), ay = Math.abs(y);
+            if (ay >= edge - near && ay <= edge) taper = true;
+            else if (ay > edge) { const band = (x - Math.sign(y) * y) / 0.3; taper = band - Math.floor(band) < 0.3; }
+          }
+          const marking = curb || surround || stub || taper || (!keepsNear && !atArmEnd && !corner) ? 2 : roadPieceLine(x, y, arms, half, pair, dash);
           if (marking === 2) { r += whiteR; g += whiteG; b += whiteB; }
           else if (marking === 1) { r += yellowR; g += yellowG; b += yellowB; }
           else { r += fillR; g += fillG; b += fillB; }

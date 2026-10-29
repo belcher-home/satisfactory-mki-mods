@@ -2,12 +2,22 @@
 
 #include "CoreMinimal.h"
 #include "FGSaveInterface.h"
+#include "DamageTypes/FGRadialDamageType.h"
 #include "Subsystem/ModSubsystem.h"
 #include "MKITerrainSubsystem.generated.h"
 
 class UInstancedStaticMeshComponent;
 class UHierarchicalInstancedStaticMeshComponent;
 class UStaticMeshComponent;
+
+/** The blast Terrain mode breaks a nobelisk-destructible rock with: radial damage that damages destructibles. */
+UCLASS()
+class MKITOOLS_API UMKITerrainBlastDamageType : public UFGRadialDamageType
+{
+	GENERATED_BODY()
+public:
+	UMKITerrainBlastDamageType(const FObjectInitializer& ObjectInitializer);
+};
 
 /** One rock removed in Terrain mode, saved with the game and replicated to every client. */
 USTRUCT(BlueprintType)
@@ -76,6 +86,8 @@ public:
 	bool RemoveRock(AActor* Rock, const FString& RemovedBy, FString& OutReason);
 	/** Server only. A player's Terrain mode removal: the player must be within reach of the rock, then RemoveRock. */
 	bool RemoveRockForPlayer(AActor* Rock, class APlayerController* Player, FString& OutReason);
+	/** Server only. Breaks an intact nobelisk-destructible rock as a nobelisk does (the game's own fracture, saved and replicated). */
+	bool BreakDestructible(class AFGDestructibleActor* Rock, class APlayerController* Player, FString& OutReason);
 	/** Server only. A player's Terrain mode removal of a rock foliage instance (a boulder), found by its location, through the game's own foliage removal: permanent. */
 	bool RemoveRockFoliageForPlayer(UHierarchicalInstancedStaticMeshComponent* Foliage, const FVector& Location, class APlayerController* Player, FString& OutReason);
 	/** Server only. Brings a removed rock back (shown and collidable again, and its HLOD instances); false when it was not removed. */

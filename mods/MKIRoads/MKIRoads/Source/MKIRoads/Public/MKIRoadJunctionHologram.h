@@ -114,6 +114,8 @@ private:
 	int32 ArmCount() const;
 	/** Takes Source's lanes the first time it is aimed at (#238). */
 	void TakeLanesFrom(const AActor* Source, int32 Lanes);
+	/** The quarter turn that puts the side joining a road or arm of Lanes against it: the scroll's, but a lane transition's end of that width. */
+	int32 JoinTurn(int32 Lanes) const;
 	float DeckThicknessCm() const;
 	void UpdatePreview();
 

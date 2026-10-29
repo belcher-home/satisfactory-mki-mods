@@ -7,7 +7,7 @@
   },
   "package": {
     "plugin": "MKIRoads",
-    "version": "0.8.1",
+    "version": "0.8.2",
     "mountPoint": "/MKIRoads/",
     "nativeModule": {
       "name": "MKIRoads",
@@ -115,7 +115,7 @@
       "nativeClass": "/Script/MKIRoads.MKIRoadSplineRoad",
       "hologramClass": "/Script/MKIRoads.MKIRoadSplineRoadHologram",
       "folder": "/MKIRoads/SplineRoad",
-      "description": "A road laid like railway track: click a start, drag the end, and it follows a straight, a curve, or a grade. Plus and Minus step between 2 and 4 lanes; hold Ctrl for straight mode, as for rail. Costs one asphalt 8x4 foundation per 64 m2 of deck.",
+      "description": "A road laid like railway track: click a start, drag the end, and it follows a straight, a curve, or a grade. Plus and Minus step between 2 and 4 lanes; hold Ctrl for straight mode, as for rail, and Shift to keep it level. Costs one asphalt 8x4 foundation per 64 m2 of deck.",
       "variants": [
         {
           "thicknessCm": 100,
@@ -161,9 +161,15 @@
             "displayName": "Truck Depot (Both Sides)",
             "arms": 9,
             "description": "A 48 m road piece with a truck bay on each side, one for each direction. Plus and Minus step between 2 and 4 lanes; road ends join both ends. A vanilla Truck Station or Fluid Truck Station aimed at it snaps onto the nearest dock, its building beside the road, and the paths there then run through the station's dock. Lays its own vehicle paths. Costs one asphalt 8x4 foundation per 64 m2 of deck."
+          },
+          {
+            "stem": "LaneTransition4To2",
+            "displayName": "Lane Transition (4 to 2)",
+            "arms": 11,
+            "description": "A 32 m road piece from a 4-lane road to a 2-lane road on the same center line: in each direction the outer lane tapers out over 24 m and merges into the inner lane, and the other way the lane splits back into two. Aimed at a road end, the end of the same width joins it; road ends join both ends. Lays its own vehicle paths. Costs one asphalt 8x4 foundation per 64 m2 of deck."
           }
         ],
-        "evidence": "The maintainer (#227): separate 3-way and 4-way intersections, one build-menu entry each with Plus and Minus for 1, 2, or 4 lanes, shaped as the intersection he built from 8 m foundations and two diagonal ramp corner pieces (measured in the AI Sandbox save, 2026-10-13: the cross roads end 8 m short of the 2-lane stem on each side, the stem 8 m short of the cross road, and an 8 m right triangle fills each inside corner), so a path can make the right turn from the outer lane into the nearest lane of the cross road (about 12 m radius; a plain square leaves about 4 m, and the vanilla path refused it as too sharp). The maintainer (#228): a 2-way intersection as well, a corner for tight turns: the +X arm and the stem with one cut corner. The maintainer (#236): a turnaround using the least space for the end of a 1, 2, or 4 lane road, a loop that takes incoming traffic back round to its outgoing lanes, with road markings. The maintainer (#237): truck depots for 1, 2, and 4 lanes that include the road and paths, added at the end of or along a road, roads joining each end (arms 6 is the depot's shape code: two straight arms and a bay). The maintainer (#239): the 48 m depot was far too big; truck depots should have a small footprint (now 16 m, the dock on the outer lane). The maintainer (#240): a small depot without a bay and a large one with a bay, each also with a depot on both sides of the road, and a depot at the end of a turnaround (a road end, not inline); arms 6-10 are depot shape codes. The maintainer (#250): the turnaround depot is gone (a small depot and a turnaround build it), and the large depot is 56 m, half a foundation longer each end, so its bends merge into the lane 7 m inside each end with 5 m straights into and out of the dock, as his working hand-built depot; arms 6-9 are depot shape codes. The maintainer (#250): the small depot is 24 m, so its dock lane runs 7 m, 5 m straight into the dock, 5 m out, and 7 m. The maintainer (#250, next try): 7 m straight into and out of each station and 17 m bends. The maintainer (#250): 4 m off each end of the large depot (48 m), its paths ending right on the border to the next piece. The maintainer (#251): the small depots are gone (a fluid station on one blocked cargo trucks with no way for a player to see why, and its bypass stacked over the dock lane stopped a truck); the large depot is now just Truck Depot."
+        "evidence": "The maintainer (#227): separate 3-way and 4-way intersections, one build-menu entry each with Plus and Minus for 1, 2, or 4 lanes, shaped as the intersection he built from 8 m foundations and two diagonal ramp corner pieces (measured in the AI Sandbox save, 2026-10-13: the cross roads end 8 m short of the 2-lane stem on each side, the stem 8 m short of the cross road, and an 8 m right triangle fills each inside corner), so a path can make the right turn from the outer lane into the nearest lane of the cross road (about 12 m radius; a plain square leaves about 4 m, and the vanilla path refused it as too sharp). The maintainer (#228): a 2-way intersection as well, a corner for tight turns: the +X arm and the stem with one cut corner. The maintainer (#236): a turnaround using the least space for the end of a 1, 2, or 4 lane road, a loop that takes incoming traffic back round to its outgoing lanes, with road markings. The maintainer (#237): truck depots for 1, 2, and 4 lanes that include the road and paths, added at the end of or along a road, roads joining each end (arms 6 is the depot's shape code: two straight arms and a bay). The maintainer (#239): the 48 m depot was far too big; truck depots should have a small footprint (now 16 m, the dock on the outer lane). The maintainer (#240): a small depot without a bay and a large one with a bay, each also with a depot on both sides of the road, and a depot at the end of a turnaround (a road end, not inline); arms 6-10 are depot shape codes. The maintainer (#250): the turnaround depot is gone (a small depot and a turnaround build it), and the large depot is 56 m, half a foundation longer each end, so its bends merge into the lane 7 m inside each end with 5 m straights into and out of the dock, as his working hand-built depot; arms 6-9 are depot shape codes. The maintainer (#250): the small depot is 24 m, so its dock lane runs 7 m, 5 m straight into the dock, 5 m out, and 7 m. The maintainer (#250, next try): 7 m straight into and out of each station and 17 m bends. The maintainer (#250): 4 m off each end of the large depot (48 m), its paths ending right on the border to the next piece. The maintainer (#251): the small depots are gone (a fluid station on one blocked cargo trucks with no way for a player to see why, and its bypass stacked over the dock lane stopped a truck); the large depot is now just Truck Depot. The maintainer (2026-10-23): a 4-to-2 way conversion for lanes, 32 m long with a 24 m taper; arms 11 is the lane transition's shape code (a 4-lane end and a 2-lane end, the outer lane of each direction tapering out)."
       },
       "patterns": {
         "folder": "/MKIRoads/Customization",
@@ -211,6 +217,75 @@
         }
       ],
       "evidence": "The maintainer (#194): concrete pillars every 24 m under raised roads. Build_PillarBase lays SM_Pillar_01 (8 x 8 x 4 m) and Build_PillarMiddle_Concrete SM_Pillar_MiddleConcrete (4 x 4 x 4 m), both 200 cm below their centered pivots (read from the game paks; live, a base on a foundation topped at z 5200 centers at 5400). Vanilla pillars become lightweight instances once built, so a road could not take real ones with it; MKIRoadSupports lays the meshes by reference, as the barriers do. The maintainer (#199): supports laid every 24 m stood in the lanes of the highway under the overpass, so each column is placed by hand and refused on a road or vehicle path. The maintainer (#200): the player sets the column's length as a zoop (the first click fixes the top, the second the base), and supports and lights step 4 m. The maintainer (#215, #216): the player decides where a support goes, so the on-road, spacing, and ground-gap checks are removed, and the top snaps every 4 m across the road too."
+    },
+    "streetLights": {
+      "folder": "/MKIRoads/StreetLights",
+      "subCategory": "/MKIRoads/BuildMenu/SC_MKIPacks_Attachments.SC_MKIPacks_Attachments_C",
+      "spotLightComponent": "/Game/FactoryGame/-Shared/PooledComponents/BPC_PoolableSpotLight_01.BPC_PoolableSpotLight_01",
+      "lightShaftComponent": "/Game/FactoryGame/-Shared/PooledComponents/BPC_PoolableLightShaft_StreetLight_01.BPC_PoolableLightShaft_StreetLight_01",
+      "entries": [
+        {
+          "stem": "StreetLightDouble",
+          "displayName": "Double Street Light",
+          "description": "A street light for the middle of the road: one pole with a single power connection on top and an arm with a lamp over each side. Aimed at an MKI Roads road it stands on the centerline, every 4 m along the road, its arms across the road. It lights, and is switched and colored, like the vanilla street light.",
+          "vanillaBuildable": "/Game/FactoryGame/Buildable/Factory/StreetLight/Build_StreetLight.Build_StreetLight",
+          "vanillaDescriptor": "/Game/FactoryGame/Buildable/Factory/StreetLight/Desc_StreetLight.Desc_StreetLight",
+          "vanillaRecipe": "/Game/FactoryGame/Recipes/Buildings/Recipe_StreetLight.Recipe_StreetLight",
+          "vanillaMesh": "/Game/FactoryGame/Buildable/Factory/StreetLight/Mesh/StreetLight_static.StreetLight_static",
+          "materials": [
+            {
+              "slot": "Paint",
+              "material": "/Game/FactoryGame/Buildable/Factory/StreetLight/Material/StreetLight_Inst.StreetLight_Inst"
+            },
+            {
+              "slot": "Color",
+              "material": "/Game/FactoryGame/Buildable/-Shared/Material/DecalColor_Masked.DecalColor_Masked"
+            },
+            {
+              "slot": "Normal",
+              "material": "/Game/FactoryGame/Buildable/-Shared/Material/Decal_Normal.Decal_Normal"
+            }
+          ],
+          "armTrimCm": 280,
+          "costMultiplier": 2,
+          "powerMultiplier": 2,
+          "powerConnectionCm": [
+            0,
+            0,
+            993.4
+          ],
+          "powerConnectionLinks": 4,
+          "lamps": [
+            {
+              "spotLightCm": [
+                0,
+                462.6,
+                941.2
+              ],
+              "lightShaftCm": [
+                0,
+                462.6,
+                991.5
+              ],
+              "yawDeg": 0
+            },
+            {
+              "spotLightCm": [
+                0,
+                -462.6,
+                941.2
+              ],
+              "lightShaftCm": [
+                0,
+                -462.6,
+                991.5
+              ],
+              "yawDeg": 180
+            }
+          ]
+        }
+      ],
+      "evidence": "The maintainer (#400): a street light for the road center made from the existing street light, with one electrical hook-up in the center in line with the pole and two arms with lights over both lanes; a new mesh, not two street lights merged (the double of #209 was removed in #221). The maintainer chose to ship an edited copy of the vanilla mesh and arms 2.8 m shorter than vanilla (lamps about 4.6 m from the pole, over the lanes of a 2-lane road). Read from the paks with CUE4Parse: Build_StreetLight (native parent AFGBuildableLightSource) shows one mesh, StreetLight_static, through MainMeshProxy, has one FGPowerConnection at (0, -173.32, 949.41) inside the insulator, and gets its light from the decoration template Deco_StreetLight: a pooled spot light pitched straight down at (0, 637.3, 997.7) and a light shaft at (0, 637.3, 1047.99) under the lamp head. AFGDecorationTemplate::GetComponentsFromSubclass reads only a class's own construction-script nodes, so the double's template is a new Blueprint of AFGDecorationTemplate with one spot light and one shaft per lamp, not a child of Deco_StreetLight. mods/MKIRoads/blender/street_light_double.py builds the mesh and its lamp and power positions from the vanilla mesh; the meshes step fails unless they equal powerConnectionCm and lamps. Two lamps: twice the vanilla street light's cost and power."
     },
     "cost": {
       "rule": "equivalent-foundation-area",
@@ -291,6 +366,60 @@
       "assetType": "StaticMesh",
       "usage": "Vanilla concrete pillar middle mesh: the stacked pieces of each Road Supports column.",
       "sdkEvidence": "Present in the SML starter project (SatisfactoryModLoader d2162c99, headers CL502094)."
+    },
+    {
+      "path": "/Game/FactoryGame/Buildable/Factory/StreetLight/Build_StreetLight.Build_StreetLight",
+      "assetType": "Blueprint",
+      "usage": "Vanilla street light: the parent of the Double Street Light (its light behaviour, hologram, power and pooled light settings).",
+      "sdkEvidence": "Present in the SML starter project (checked 2026-10-23, #400)."
+    },
+    {
+      "path": "/Game/FactoryGame/Buildable/Factory/StreetLight/Desc_StreetLight.Desc_StreetLight",
+      "assetType": "Blueprint",
+      "usage": "Vanilla street light descriptor: the Double Street Light's build-menu icons.",
+      "sdkEvidence": "Present in the SML starter project (checked 2026-10-23, #400)."
+    },
+    {
+      "path": "/Game/FactoryGame/Recipes/Buildings/Recipe_StreetLight.Recipe_StreetLight",
+      "assetType": "Blueprint",
+      "usage": "Vanilla street light recipe: the Double Street Light costs twice its ingredients.",
+      "sdkEvidence": "Present in the SML starter project (checked 2026-10-23, #400)."
+    },
+    {
+      "path": "/Game/FactoryGame/Buildable/Factory/StreetLight/Mesh/StreetLight_static.StreetLight_static",
+      "assetType": "StaticMesh",
+      "usage": "Vanilla street light mesh, which the Double Street Light mesh is made from (exported locally, never packaged).",
+      "sdkEvidence": "Present in the SML starter project (checked 2026-10-23, #400)."
+    },
+    {
+      "path": "/Game/FactoryGame/Buildable/Factory/StreetLight/Material/StreetLight_Inst.StreetLight_Inst",
+      "assetType": "MaterialInstanceConstant",
+      "usage": "Vanilla street light material: the Double Street Light's Paint slot.",
+      "sdkEvidence": "Present in the SML starter project (checked 2026-10-23, #400)."
+    },
+    {
+      "path": "/Game/FactoryGame/Buildable/-Shared/Material/DecalColor_Masked.DecalColor_Masked",
+      "assetType": "Material",
+      "usage": "Vanilla color decal material: the Double Street Light's Color slot.",
+      "sdkEvidence": "Present in the SML starter project (checked 2026-10-23, #400)."
+    },
+    {
+      "path": "/Game/FactoryGame/Buildable/-Shared/Material/Decal_Normal.Decal_Normal",
+      "assetType": "Material",
+      "usage": "Vanilla normal decal material: the Double Street Light's Normal slot.",
+      "sdkEvidence": "Present in the SML starter project (checked 2026-10-23, #400)."
+    },
+    {
+      "path": "/Game/FactoryGame/-Shared/PooledComponents/BPC_PoolableSpotLight_01.BPC_PoolableSpotLight_01",
+      "assetType": "Blueprint",
+      "usage": "Vanilla pooled spot light: one under each Double Street Light lamp.",
+      "sdkEvidence": "Present in the SML starter project (checked 2026-10-23, #400)."
+    },
+    {
+      "path": "/Game/FactoryGame/-Shared/PooledComponents/BPC_PoolableLightShaft_StreetLight_01.BPC_PoolableLightShaft_StreetLight_01",
+      "assetType": "Blueprint",
+      "usage": "Vanilla street light shaft: one under each Double Street Light lamp.",
+      "sdkEvidence": "Present in the SML starter project (checked 2026-10-23, #400)."
     }
   ]
 }

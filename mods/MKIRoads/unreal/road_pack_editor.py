@@ -190,10 +190,14 @@ def support_entries():
     return PLAN["supports"]["entries"]
 
 
+def street_light_entries():
+    return PLAN["streetLights"]["entries"]
+
+
 def menu_entries():
-    """Every build-menu entry the MKI Roads lists: the listed spline roads (#233: Road, 1 m), the intersections, then the
-    supports. The retired 2 m and 4 m roads are built for saved roads only, never unlocked."""
-    return [entry for entry in spline_road_entries() if entry["listed"]] + junction_entries() + support_entries()
+    """Every build-menu entry the MKI Roads lists: the listed spline roads (#233: Road, 1 m), the intersections, the
+    supports, then the street lights. The retired 2 m and 4 m roads are built for saved roads only, never unlocked."""
+    return [entry for entry in spline_road_entries() if entry["listed"]] + junction_entries() + support_entries() + street_light_entries()
 
 
 
@@ -501,6 +505,198 @@ def build_supports(shared):
     return recipes
 
 
+def import_street_light_mesh(entry):
+    """The street light mesh the meshes step built from the vanilla one (#400), with its UCX collision and the vanilla
+    materials by slot."""
+    data = unreal.FbxStaticMeshImportData()
+    data.set_editor_property("combine_meshes", True)
+    data.set_editor_property("auto_generate_collision", False)
+    data.set_editor_property("one_convex_hull_per_ucx", True)
+    data.set_editor_property("remove_degenerates", True)
+    # Blender writes metres and declares them (UnitScaleFactor 100); without this the import reads centimetres and the
+    # light came in at 1/100 size, invisible and unbuildable in game (#400).
+    data.set_editor_property("convert_scene_unit", True)
+    options = unreal.FbxImportUI()
+    options.set_editor_property("import_mesh", True)
+    options.set_editor_property("import_as_skeletal", False)
+    options.set_editor_property("import_materials", False)
+    options.set_editor_property("import_textures", False)
+    options.set_editor_property("import_animations", False)
+    options.set_editor_property("mesh_type_to_import", unreal.FBXImportType.FBXIT_STATIC_MESH)
+    options.set_editor_property("static_mesh_import_data", data)
+    task = unreal.AssetImportTask()
+    task.set_editor_property("filename", os.path.join(CONFIG["meshDir"], entry["meshFile"]))
+    task.set_editor_property("destination_path", asset_folder(entry["meshPath"]))
+    task.set_editor_property("destination_name", asset_name(entry["meshPath"]))
+    task.set_editor_property("automated", True)
+    task.set_editor_property("replace_existing", True)
+    task.set_editor_property("save", False)
+    task.set_editor_property("options", options)
+    unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+    mesh = unreal.load_asset(package_name(entry["meshPath"]))
+    if not isinstance(mesh, unreal.StaticMesh):
+        raise RuntimeError("FBX import produced no static mesh for %s" % entry["meshPath"])
+    slots = [str(item.get_editor_property("material_slot_name")) for item in mesh.get_editor_property("static_materials")]
+    if sorted(slots) != sorted(item["slot"] for item in entry["materials"]):
+        raise RuntimeError("%s has material slots %s, the manifest %s" % (entry["meshPath"], slots, [item["slot"] for item in entry["materials"]]))
+    for item in entry["materials"]:
+        mesh.set_material(slots.index(item["slot"]), load_object(item["material"]))
+    problems = street_light_bounds_problems(entry, mesh)
+    if problems:
+        raise RuntimeError("; ".join(problems))
+    unreal.EditorAssetLibrary.save_loaded_asset(mesh, False)
+    return mesh
+
+
+def street_light_bounds_problems(entry, mesh):
+    """Why the imported mesh's bounds (cm) differ by more than 1 cm from those the meshes step reported for it."""
+    meta_path = os.path.join(CONFIG["meshDir"], entry["meshFile"][:-len(".fbx")] + ".meta.json")
+    expected = json.load(open(meta_path, encoding="utf-8"))["boundsCm"]
+    box = mesh.get_bounding_box()
+    actual = {"min": [box.min.x, box.min.y, box.min.z], "max": [box.max.x, box.max.y, box.max.z]}
+    if all(abs(float(actual[key][axis]) - float(expected[key][axis])) <= 1.0 for key in ("min", "max") for axis in range(3)):
+        return []
+    return ["%s bounds %s cm, the meshes step reported %s" % (entry["meshPath"], {key: [round(value, 1) for value in values] for key, values in actual.items()}, expected)]
+
+
+def subobjects(blueprint):
+    """(handle, data) of each construction-script node of a Blueprint, inherited ones included, root first."""
+    subsystem = unreal.get_engine_subsystem(unreal.SubobjectDataSubsystem)
+    library = unreal.SubobjectDataBlueprintFunctionLibrary
+    return [(handle, library.get_data(handle)) for handle in subsystem.k2_gather_subobject_data_for_blueprint(blueprint)]
+
+
+def subobject_template(blueprint, data):
+    """The component template of a node that this Blueprint edits: for an inherited node, the Blueprint's override."""
+    return unreal.SubobjectDataBlueprintFunctionLibrary.get_object_for_blueprint(data, blueprint)
+
+
+def subobject_named(blueprint, name):
+    for handle, data in subobjects(blueprint):
+        if str(unreal.SubobjectDataBlueprintFunctionLibrary.get_variable_name(data)) == name:
+            return handle, data
+    raise RuntimeError("%s has no component %s" % (blueprint.get_path_name(), name))
+
+
+def as_uclass(component_class):
+    """A UClass for a Python wrapper type (unreal.StaticMeshComponent) or a loaded class (a Blueprint's generated class,
+    an unreal.Class, which isinstance cannot take)."""
+    return component_class.static_class() if isinstance(component_class, type) else component_class
+
+
+def components_of_class(blueprint, component_class):
+    """(name, template) of each component of the Blueprint, inherited ones included, that is a component_class."""
+    library = unreal.SubobjectDataBlueprintFunctionLibrary
+    wanted = as_uclass(component_class)
+    found = []
+    for _, data in subobjects(blueprint):
+        template = subobject_template(blueprint, data)
+        if isinstance(template, unreal.ActorComponent) and unreal.MathLibrary.class_is_child_of(template.get_class(), wanted):
+            found.append((str(library.get_variable_name(data)), template))
+    return found
+
+
+def near(vector_value, values, tolerance):
+    return all(abs(float(getattr(vector_value, axis)) - float(value)) <= tolerance for axis, value in zip("xyz", values))
+
+
+def vector(values):
+    return unreal.Vector(x=float(values[0]), y=float(values[1]), z=float(values[2]))
+
+
+def build_street_light_decorator(entry, vanilla_decorator):
+    """The street light's decoration template (#400): a new Blueprint of AFGDecorationTemplate (which reads only a class's
+    own construction-script nodes) with the vanilla template's pooled spot light and light shaft once per lamp, rotated
+    by the lamp's yaw. The vanilla nodes give the classes and rotations."""
+    vanilla = unreal.load_asset(package_name(path_of(vanilla_decorator)))
+    if vanilla is None:
+        raise RuntimeError("Unable to load the vanilla decoration template %s" % path_of(vanilla_decorator))
+    sources = {}
+    for key in ("spotLightComponent", "lightShaftComponent"):
+        component_class = load_class(entry[key])
+        found = components_of_class(vanilla, component_class)
+        if len(found) != 1:
+            raise RuntimeError("%s has %d %s nodes, expected 1" % (path_of(vanilla_decorator), len(found), entry[key]))
+        sources[key] = (component_class, found[0][1])
+    blueprint = create_blueprint(entry["decoratorPath"], unreal.FGDecorationTemplate)
+    subsystem = unreal.get_engine_subsystem(unreal.SubobjectDataSubsystem)
+    root = subobjects(blueprint)[0][0]
+    for index, lamp in enumerate(entry["lamps"]):
+        for key, location, name in (("spotLightComponent", lamp["spotLightCm"], "SpotLight"), ("lightShaftComponent", lamp["lightShaftCm"], "LightShaft")):
+            component_class, source = sources[key]
+            handle, failure = subsystem.add_new_subobject(unreal.AddNewSubobjectParams(parent_handle=root, new_class=component_class, blueprint_context=blueprint))
+            if not unreal.SubobjectDataBlueprintFunctionLibrary.is_handle_valid(handle):
+                raise RuntimeError("Could not add %s to %s: %s" % (key, entry["decoratorPath"], failure))
+            subsystem.rename_subobject(handle, text("%s_%d" % (name, index)))
+            template = subobject_template(blueprint, unreal.SubobjectDataBlueprintFunctionLibrary.get_data(handle))
+            rotation = source.get_editor_property("relative_rotation")
+            template.set_editor_property("relative_location", vector(location))
+            template.set_editor_property("relative_rotation", unreal.Rotator(roll=rotation.roll, pitch=rotation.pitch, yaw=rotation.yaw + float(lamp["yawDeg"])))
+            template.set_editor_property("relative_scale3d", source.get_editor_property("relative_scale3d"))
+    compile_and_save(blueprint)
+    return blueprint
+
+
+def build_street_lights(shared):
+    """Road street lights (#400): a child Blueprint of the vanilla street light showing the mesh built from the vanilla
+    one, its power connection moved to the hub in line with the pole, its own decoration template (a spot light and light
+    shaft per lamp) and power use times the entry's multiplier; a descriptor with the vanilla street light's icons; a
+    recipe of the vanilla street light's ingredients times the cost multiplier."""
+    recipes = []
+    for entry in street_light_entries():
+        vanilla_class = load_class(entry["parentClass"])
+        vanilla_defaults = defaults_of(vanilla_class)
+        vanilla_descriptor = defaults_of(load_class(class_path_of(entry["vanillaDescriptor"])))
+        vanilla_recipe = defaults_of(load_class(class_path_of(entry["vanillaRecipe"])))
+        mesh = import_street_light_mesh(entry)
+        decorator = build_street_light_decorator(entry, vanilla_defaults.get_editor_property("mDecoratorClass"))
+
+        buildable = create_blueprint(entry["classPath"], vanilla_class)
+        unreal.BlueprintEditorLibrary.compile_blueprint(buildable)
+        meshes = components_of_class(buildable, unreal.StaticMeshComponent)
+        vanilla_mesh = load_object(entry["vanillaMesh"])
+        shown = [(name, template) for name, template in meshes if template.get_editor_property("static_mesh") == vanilla_mesh]
+        if len(shown) != 1:
+            raise RuntimeError("%s shows %s through %d components, expected 1 (%s)" % (entry["parentClass"], entry["vanillaMesh"], len(shown), [name for name, _ in meshes]))
+        shown[0][1].set_editor_property("static_mesh", mesh)
+        connections = components_of_class(buildable, unreal.FGPowerConnectionComponent)
+        if len(connections) != 1:
+            raise RuntimeError("%s has %d power connections, expected 1" % (entry["parentClass"], len(connections)))
+        connections[0][1].set_editor_property("relative_location", vector(entry["powerConnectionCm"]))
+        connections[0][1].set_editor_property("mMaxNumConnectionLinks", int(entry["powerConnectionLinks"]))
+        unreal.BlueprintEditorLibrary.compile_blueprint(buildable)
+        defaults = defaults_of(buildable.generated_class())
+        defaults.set_editor_property("mDisplayName", text(entry["displayName"]))
+        defaults.set_editor_property("mDescription", text(entry["description"]))
+        defaults.set_editor_property("mDecoratorClass", decorator.generated_class())
+        defaults.set_editor_property("mPowerConsumption", float(vanilla_defaults.get_editor_property("mPowerConsumption")) * float(entry["powerMultiplier"]))
+        compile_and_save(buildable)
+
+        descriptor = create_blueprint(entry["descriptorPath"], unreal.FGBuildingDescriptor)
+        defaults = defaults_of(descriptor.generated_class())
+        defaults.set_editor_property("mBuildableClass", buildable.generated_class())
+        defaults.set_editor_property("mDisplayName", text(entry["displayName"]))
+        defaults.set_editor_property("mDescription", text(entry["description"]))
+        defaults.set_editor_property("mCategory", shared["categories"][entry["buildMenu"]["category"]])
+        defaults.set_editor_property("mSubCategories", [shared["categories"][entry["buildMenu"]["subCategory"]]])
+        defaults.set_editor_property("mMenuPriority", float(entry["menuPriority"]))
+        defaults.set_editor_property("mSmallIcon", vanilla_descriptor.get_editor_property("mSmallIcon"))
+        defaults.set_editor_property("mPersistentBigIcon", vanilla_descriptor.get_editor_property("mPersistentBigIcon"))
+        compile_and_save(descriptor)
+
+        recipe = create_blueprint(entry["recipePath"], unreal.FGRecipe)
+        defaults = defaults_of(recipe.generated_class())
+        defaults.set_editor_property("mDisplayName", text(entry["displayName"]))
+        defaults.set_editor_property("mIngredients", [unreal.ItemAmount(item_class=item.get_editor_property("item_class"), amount=int(item.get_editor_property("amount")) * int(entry["costMultiplier"]))
+                                                      for item in vanilla_recipe.get_editor_property("mIngredients")])
+        defaults.set_editor_property("mProduct", [unreal.ItemAmount(item_class=descriptor.generated_class(), amount=1)])
+        defaults.set_editor_property("mProducedIn", vanilla_recipe.get_editor_property("mProducedIn"))
+        defaults.set_editor_property("mMaterialCustomizationRecipe", None)
+        compile_and_save(recipe)
+        recipes.append(recipe.generated_class())
+    return recipes
+
+
 def build_registration(recipes):
     """The MKI Roads milestone, which unlocks every spline road and road pattern recipe, and the root game-world module
     that registers it."""
@@ -538,7 +734,7 @@ def run_import():
     # Lane markings (#159): the two paint materials the road marking patterns draw with.
     for settings in PLAN["paints"].values():
         build_paint_material(settings)
-    build_registration(build_spline_roads(shared) + build_junctions(shared) + build_spline_patterns(shared) + build_supports(shared))
+    build_registration(build_spline_roads(shared) + build_junctions(shared) + build_spline_patterns(shared) + build_supports(shared) + build_street_lights(shared))
     unreal.EditorAssetLibrary.save_directory(MOUNT, only_if_is_dirty=False, recursive=True)
     report["assets"] = sorted(unreal.EditorAssetLibrary.list_assets(MOUNT, recursive=True, include_folder=False))
 
@@ -682,7 +878,8 @@ def verify_registration_chain():
             continue
         entry = splines[item["recipe"]]
         menu = menu_settings(entry["buildMenu"]["subCategory"])
-        expected = {"descriptor": entry["descriptorPath"], "buildable": entry["classPath"], "hologram": entry["hologramClass"], "decorator": None,
+        hologram = entry["hologramClass"] if "hologramClass" in entry else path_of(defaults_of(load_class(entry["parentClass"])).get_editor_property("mHologramClass"))
+        expected = {"descriptor": entry["descriptorPath"], "buildable": entry["classPath"], "hologram": hologram, "decorator": entry.get("decoratorPath"),
                     "category": entry["buildMenu"]["category"], "subCategories": [entry["buildMenu"]["subCategory"]]}
         check({key: item[key] for key in expected} == expected and any(package_name(PACKAGE["producedIn"]) in produced for produced in item["producedIn"]),
               "%s -> %s -> %s -> %s -> %s (%s) in %s > %s" % (asset_name(item["root"]), asset_name(item["schematic"]), asset_name(item["recipe"]), asset_name(item["descriptor"] or "/?"),
@@ -807,6 +1004,59 @@ def verify_supports():
         check(icons == [path_of(vanilla.get_editor_property(key)) for key in ("mSmallIcon", "mPersistentBigIcon")] and all(icons), "%s icons %s are the vanilla concrete pillar's" % (asset_name(entry["descriptorPath"]), icons))
 
 
+def verify_street_lights():
+    """Each road street light (#400) is a child of the vanilla street light showing its own mesh (the vanilla materials by
+    slot, with collision), one power connection at the hub, its own decoration template with a spot light and light shaft
+    per lamp, power and cost times the entry's multipliers, and the vanilla street light's icons."""
+    for entry in street_light_entries():
+        buildable = load_class(entry["classPath"])
+        if not check(buildable is not None, "%s exists" % entry["classPath"]):
+            continue
+        label = asset_name(entry["classPath"])
+        vanilla_class = load_class(entry["parentClass"])
+        check(unreal.MathLibrary.class_is_child_of(buildable, vanilla_class), "%s derives from %s" % (label, entry["parentClass"]))
+        blueprint = unreal.load_asset(package_name(entry["classPath"]))
+        mesh = unreal.load_asset(package_name(entry["meshPath"]))
+        if check(isinstance(mesh, unreal.StaticMesh), "%s is a static mesh" % entry["meshPath"]):
+            materials = {str(item.get_editor_property("material_slot_name")): path_of(item.get_editor_property("material_interface")) for item in mesh.get_editor_property("static_materials")}
+            check(materials == {item["slot"]: item["material"] for item in entry["materials"]}, "%s uses the vanilla street light materials by slot (%s)" % (asset_name(entry["meshPath"]), materials))
+            # The editor subsystems are not there in the headless commandlet (StaticMeshEditorSubsystem is None); read the body setup.
+            body = mesh.get_editor_property("body_setup")
+            hulls = len(body.get_editor_property("agg_geom").get_editor_property("convex_elems")) if body else 0
+            check(hulls > 0, "%s has %d convex collision hulls" % (asset_name(entry["meshPath"]), hulls))
+            bounds = street_light_bounds_problems(entry, mesh)
+            check(not bounds, "%s has the size the meshes step built (%s)" % (asset_name(entry["meshPath"]), bounds or "within 1 cm"))
+        shown = [name for name, template in components_of_class(blueprint, unreal.StaticMeshComponent) if template.get_editor_property("static_mesh") == mesh]
+        vanilla_mesh = load_object(entry["vanillaMesh"])
+        still_vanilla = [name for name, template in components_of_class(blueprint, unreal.StaticMeshComponent) if template.get_editor_property("static_mesh") == vanilla_mesh]
+        check(len(shown) == 1 and not still_vanilla, "%s shows %s through %s and the vanilla mesh nowhere (%s)" % (label, asset_name(entry["meshPath"]), shown, still_vanilla))
+        connections = components_of_class(blueprint, unreal.FGPowerConnectionComponent)
+        check(len(connections) == 1 and near(connections[0][1].get_editor_property("relative_location"), entry["powerConnectionCm"], 0.01)
+              and connections[0][1].get_editor_property("mMaxNumConnectionLinks") == entry["powerConnectionLinks"],
+              "%s has one power connection, at %s, taking %s power lines" % (label, entry["powerConnectionCm"], entry["powerConnectionLinks"]))
+        defaults = defaults_of(buildable)
+        vanilla_defaults = defaults_of(vanilla_class)
+        check(close(defaults.get_editor_property("mPowerConsumption"), vanilla_defaults.get_editor_property("mPowerConsumption") * entry["powerMultiplier"], 0.001),
+              "%s uses %s MW, %s times the vanilla street light" % (label, defaults.get_editor_property("mPowerConsumption"), entry["powerMultiplier"]))
+        check(path_of(defaults.get_editor_property("mDecoratorClass")) == entry["decoratorPath"], "%s decorates with %s" % (label, entry["decoratorPath"]))
+        decorator = unreal.load_asset(package_name(entry["decoratorPath"]))
+        check(decorator is not None and unreal.MathLibrary.class_is_child_of(load_class(entry["decoratorPath"]), unreal.FGDecorationTemplate), "%s is a decoration template" % asset_name(entry["decoratorPath"]))
+        if decorator is not None:
+            for key, location_key in (("spotLightComponent", "spotLightCm"), ("lightShaftComponent", "lightShaftCm")):
+                found = sorted(tuple(round(value, 1) for value in (template.get_editor_property("relative_location").x, template.get_editor_property("relative_location").y, template.get_editor_property("relative_location").z))
+                               for _, template in components_of_class(decorator, load_class(entry[key])))
+                expected = sorted(tuple(round(float(value), 1) for value in lamp[location_key]) for lamp in entry["lamps"])
+                check(found == expected, "%s places a %s at each lamp %s" % (asset_name(entry["decoratorPath"]), asset_name(entry[key]), found))
+        recipe = load_class(entry["recipePath"])
+        vanilla_cost = [(item, amount * entry["costMultiplier"]) for item, amount in ingredients_of(load_class(class_path_of(entry["vanillaRecipe"])))]
+        check(recipe is not None and ingredients_of(recipe) == vanilla_cost and len(vanilla_cost) > 0, "%s costs %s times the vanilla street light (%s)" % (asset_name(entry["recipePath"]), entry["costMultiplier"], vanilla_cost))
+        descriptor = defaults_of(load_class(entry["descriptorPath"]))
+        vanilla = defaults_of(load_class(class_path_of(entry["vanillaDescriptor"])))
+        icons = [path_of(descriptor.get_editor_property(key)) for key in ("mSmallIcon", "mPersistentBigIcon")]
+        check(icons == [path_of(vanilla.get_editor_property(key)) for key in ("mSmallIcon", "mPersistentBigIcon")] and all(icons), "%s icons %s are the vanilla street light's" % (asset_name(entry["descriptorPath"]), icons))
+        report["assets"][entry["classPath"]] = {"mesh": entry["meshPath"], "decorator": entry["decoratorPath"], "parent": blueprint_parent_tags(entry["classPath"])}
+
+
 def verify_icon(icon_path):
     icon = unreal.load_asset(package_name(icon_path))
     if check(icon is not None, "icon %s exists" % icon_path):
@@ -858,6 +1108,7 @@ def run_verify():
     verify_junctions()
     verify_spline_patterns()
     verify_supports()
+    verify_street_lights()
     verify_categories()
     verify_vanilla_asphalt()
     verify_paints()

@@ -24,6 +24,8 @@ struct FMKIRoadJunctionArm
 {
 	FVector2D Center = FVector2D::ZeroVector;
 	FVector2D Outward = FVector2D(1.0, 0.0);
+	/** Lanes at this arm's end; 0, the piece's own (only a lane transition's arms differ). */
+	int32 Lanes = 0;
 };
 
 /** A painted rectangle on an arm (#229): along the arm from the crossing square's edge, lateral to the right of the arm's
@@ -55,6 +57,8 @@ struct FMKIRoadJunctionLayout
 	bool bTurnaround = false;
 	/** A truck depot (#237): a straight piece with a bay. */
 	bool bTruckDepot = false;
+	/** A lane transition: a straight piece from a 4-lane end to a 2-lane end. */
+	bool bLaneTransition = false;
 	/** Per cell: under a depot station (#241); drawn as its own mesh with the factory zone pattern (#246). */
 	TArray<bool> CellIsPad;
 	/**
@@ -145,6 +149,34 @@ public:
 	static bool IsDepotShape(int32 Arms) { return Arms == TruckDepotShape || Arms == TruckDepotBothShape; }
 	static bool IsTurnaroundShape(int32 Arms) { return Arms == 1; }
 	static bool IsBothSidesShape(int32 Arms) { return Arms == TruckDepotBothShape; }
+	/**
+	 * A lane transition (the maintainer, 2026-10-23: a 4-to-2 way conversion for lanes), by its shape code in mArms: a straight
+	 * piece, its 4-lane end at -X and its 2-lane end at +X on one center line. In each direction the outer lane ends: toward
+	 * the 2-lane end it merges into the inner lane over the taper, and from the 2-lane end the lane splits back into two. The
+	 * deck is whole 8 m tiles, the full 4-lane width along the taper and a one-tile 2-lane neck at the +X end; outside the
+	 * taper line the deck is hatched. Its width is fixed: Plus and Minus do nothing.
+	 */
+	static constexpr int32 LaneTransitionShape = 11;
+	static bool IsLaneTransitionShape(int32 Arms) { return Arms == LaneTransitionShape; }
+	static constexpr int32 TransitionWideLanes = 4;
+	static constexpr int32 TransitionNarrowLanes = 2;
+	/** How far along the road the ending lane tapers out (the maintainer: 32 m in all, a 24 m taper), and the 2-lane neck past it. */
+	static constexpr float TransitionTaperCm = 2400.f;
+	static constexpr float TransitionNeckCm = 800.f;
+	static constexpr float TransitionHalfLengthCm() { return (TransitionTaperCm + TransitionNeckCm) * 0.5f; }
+	/** The x where the taper ends and the neck begins. */
+	static constexpr float TransitionTaperEndCm() { return TransitionHalfLengthCm() - TransitionNeckCm; }
+	/** The dotted lane-drop line between the through and the ending lane runs this far in from the 4-lane end. */
+	static constexpr float TransitionDropLineCm = 1200.f;
+	/** The lane-drop line (North American practice: twice a lane line's width, short dashes and long gaps). */
+	static constexpr float DropLineDashCm = 100.f;
+	static constexpr float DropLineGapCm = 300.f;
+	/** The hatching outside the taper line: white bands this wide, every period, at 45 degrees. */
+	static constexpr float HatchStripeWidthCm = 60.f;
+	static constexpr float HatchPeriodCm = 300.f;
+	/** A lane transition's local paths: each through lane, the merging lane's bend, and the splitting lane's bend. */
+	static void LaneTransitionPaths(TArray<TArray<TPair<FVector2D, FVector2D>>>& OutPaths);
+
 	/** Half the length of a depot: its two bends and the dock's straights. */
 	static constexpr float DepotHalfLengthCm = 2400.f;
 	/** How far along the road a bay's bend runs (the maintainer, #250: 17 m bends with 7 m straights at the dock). */
@@ -178,6 +210,12 @@ public:
 	static TArray<FVector2D> DepotPadCorners(const FMKIRoadDepotDock& Dock);
 	/** A depot's local paths (points and headings): its through lanes, and each bay's bends and dock straights. */
 	static void DepotPaths(int32 Arms, int32 Lanes, TArray<TArray<TPair<FVector2D, FVector2D>>>& OutPaths);
+	/**
+	 * A 4-lane depot's lane switches (the maintainer, 2026-10-23, laid by hand on both depots): in each direction a path from
+	 * the inner lane to the outer and one from the outer to the inner, each a bend of two arcs over the depot's whole length,
+	 * from one end's lane to the other end's, so a truck changes lanes at the nodes the roads join. None on 2 lanes.
+	 */
+	static void DepotLaneSwitchPaths(int32 Lanes, TArray<TArray<TPair<FVector2D, FVector2D>>>& OutPaths);
 	/** The local through lanes of a straight piece: each lane both ways as a road's (keep right), points and headings. */
 	static void StraightLanePaths(int32 Lanes, float HalfLengthCm, TArray<TArray<TPair<FVector2D, FVector2D>>>& OutPaths);
 	/** The local extent of a layout's cells. */
@@ -278,6 +316,9 @@ public:
 	UMaterialInterface* GetDeckMaterial() const { return mDeckMaterial.LoadSynchronous(); }
 	/** The arms' ends in world space: X out along the arm, at the deck top. */
 	TArray<FTransform> GetArmEnds() const;
+	/** The lanes at the arm end nearest WorldPoint: the piece's, but on a lane transition each end's own. */
+	int32 GetLanesAtArm(const FVector& WorldPoint) const;
+	bool IsLaneTransition() const { return IsLaneTransitionShape(mArms); }
 	/**
 	 * The side of this piece that Aim is within AMKIRoadSplineRoad::SnapBandCm of (the maintainer,
 	 * 2026-10-18, as vanilla foundations snap): OutPoint on that side at the deck top (an arm's end when the side has one,
@@ -292,7 +333,7 @@ public:
 	bool OwnsAutoPath(const AActor* Path) const;
 
 protected:
-	/** Arms: 1 (a turnaround, #236), 2 (a corner, #228), 3 (a T), 4, or a depot shape (6-10, #237, #240). The build-menu entry's. */
+	/** Arms: 1 (a turnaround, #236), 2 (a corner, #228), 3 (a T), 4, a depot shape (7, 9, #237, #240), or a lane transition (11; 10 was the turnaround depot, #250). The build-menu entry's. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MKI Roads|Junction")
 	int32 mArms = 4;
 
@@ -338,6 +379,9 @@ protected:
 	/** The FMKIRoadAutoPaths::Version its paths were laid with: older ones are laid again (#235: the first did not join). */
 	UPROPERTY(SaveGame)
 	int32 mAutoPathsVersion = 0;
+	/** Whether the paths around it were validated again once its floor stood (#396: paths of older neighbours ending on it). */
+	UPROPERTY(SaveGame)
+	bool mNearbyPathsRevalidated = false;
 	/** A depot's bay paths (#237, before #239's smaller depot); none are laid any more. */
 	UPROPERTY(SaveGame)
 	TArray<TObjectPtr<AFGVehiclePathSegment>> mBayPaths;
@@ -347,9 +391,14 @@ protected:
 	/** One bit per dock (#240): its paths have been laid onto a station's docking node, once, so paths the player deletes stay deleted. */
 	UPROPERTY(SaveGame)
 	int32 mDocksJoined = 0;
+	/** Whether a depot has laid its lane switches: once only, so switches the player deletes stay deleted. */
+	UPROPERTY(SaveGame)
+	bool mLaneSwitchesLaid = false;
 
 private:
 	void LayAutoPaths();
+	/** A depot laid before its lane switches existed lays them, skipping any the player already laid between the same nodes. */
+	void LayLaneSwitches();
 	void BuildDeck();
 	/** Spawns its squares, or fits the saved ones to the layout (a piece saved before squares gets them on load). */
 	void SyncTiles();

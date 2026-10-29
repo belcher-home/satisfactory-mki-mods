@@ -98,6 +98,18 @@
         476,
         476
       ]
+    },
+    "/MKIRoads/Icons/Icon_MKIR_LaneTransition4To2.Icon_MKIR_LaneTransition4To2": {
+      "key": "road_lane_transition",
+      "size": 512,
+      "rgbaSha256": "cdd0084288032f4aa40649145e7c2dde0d8d65ee2dc57f1b06566e095fb4865c",
+      "coverage": 0.3244,
+      "bounds": [
+        35,
+        146,
+        476,
+        365
+      ]
     }
   }
 }
